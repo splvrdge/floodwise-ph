@@ -4,11 +4,30 @@ developmentMode = false
 [server]
 headless = true
 port = 8501
-enableCORS = false
+enableCORS = true
 enableXsrfProtection = true
 maxUploadSize = 200
 baseUrlPath = "/"
 fileWatcherType = "none"
+enableStaticServing = true
+enableWebsocketCompression = false
+enableCORS = true
+enableXsrfProtection = true
+enableWebsocketCompression = false
+
+# Enable built-in health checks
+[server.health]
+enabled = true
+path = "/healthz"
+
+[browser]
+gatherUsageStats = false
+serverAddress = "0.0.0.0"
+
+[runner]
+magicEnabled = true
+installTracer = false
+fixMatplotlib = true
 
 [browser]
 gatherUsageStats = false

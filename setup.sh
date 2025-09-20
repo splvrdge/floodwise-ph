@@ -15,5 +15,11 @@ mkdir -p .streamlit
 export PYTHONUNBUFFERED=1
 export PYTHONPATH="${PYTHONPATH}:/home/appuser"
 
+# Start health check in background
+nohup python health.py > health.log 2>&1 &
+
 # Make sure the script is executable
 chmod +x setup.sh
+
+# Keep the container alive
+while true; do sleep 1000; done
