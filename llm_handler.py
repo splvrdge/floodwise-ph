@@ -106,52 +106,76 @@ class LLMHandler:
         
         return LegacyWrapper()
     
-    def generate_response(self, query: str, relevant_records: List[Dict[str, Any]], 
-                         context_info: Dict[str, Any] = None) -> str:
-        """Generate a response based on the query and relevant flood control project data."""
+    def generate_response(self, query: str, records: List[Dict[str, Any]], context: Dict[str, Any] = None) -> str:
+        """
+        Generate a response based on the query and relevant records.
         
+        Args:
+            query: User's question
+            records: Relevant records from the database
+            context: Additional context about the dataset
+            
+        Returns:
+            Formatted response string
+        """
         if not self.client:
-            return self._fallback_response(query, relevant_records)
-        
+            return "I'm sorry, the AI service is currently unavailable. Please try again later."
+            
         try:
-            # Prepare context from relevant records
-            context = self._prepare_context(relevant_records, context_info)
+            # Determine query type
+            query_type = self._classify_query(query)
             
-            # Create the prompt
-            system_prompt = self._create_system_prompt()
-            user_prompt = self._create_user_prompt(query, context)
+            # Prepare the prompt with context and records
+            prompt = self._prepare_prompt(query, records, context, query_type)
             
-            # Generate response using OpenAI
+            # Call the LLM
             response = self.client.chat.completions.create(
                 model=self.model,
                 messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt}
+                    {"role": "system", "content": self._get_system_prompt(query_type)},
+                    {"role": "user", "content": prompt}
                 ],
-                max_tokens=500,
-                temperature=0.3
+                temperature=0.7,
+                max_tokens=1000
             )
             
-            return response.choices[0].message.content.strip()
+            return self._format_response(response.choices[0].message.content.strip(), query_type, len(records))
             
         except Exception as e:
-            st.error(f"Error generating LLM response: {str(e)}")
-            return self._fallback_response(query, relevant_records)
-    
-    def _create_system_prompt(self) -> str:
-        """Create the system prompt for the LLM."""
-        return """You are a knowledgeable assistant specializing in flood control projects in the Philippines. 
-        You have access to a database of flood control project information and should provide accurate, 
-        helpful responses based on the provided data.
-
-        Guidelines:
-        1. Answer questions directly and concisely
-        2. Use specific data from the provided records when available
-        3. If asked about costs, dates, locations, contractors, or project types, reference the exact data
-        4. If the data doesn't contain information to answer the question, clearly state this
-        5. Focus on flood mitigation, drainage, and water management projects
-        6. Do not generate graphs, plots, or visual content - text responses only
-        7. Be helpful and informative while staying within the scope of the provided data"""
+            print(f"Error generating response: {str(e)}")
+            return "I encountered an error while processing your request. Please try again later."
+            
+    def _classify_query(self, query: str) -> str:
+        """Classify the type of question being asked."""
+        query_lower = query.lower()
+        
+        # Location-based questions
+        location_terms = ['region', 'province', 'city', 'municipality', 'barangay', 'in ', 'at ', 'from ']
+        if any(term in query_lower for term in location_terms):
+            return 'location'
+            
+        # Time-based questions
+        time_terms = ['year', 'month', 'date', 'day', 'week', 'when', 'complet', 'start', 'end', 'duration']
+        if any(term in query_lower for term in time_terms):
+            return 'time'
+            
+        # Cost/budget questions
+        cost_terms = ['cost', 'price', 'budget', 'expensive', 'cheap', 'amount', 'fund', 'investment']
+        if any(term in query_lower for term in cost_terms):
+            return 'cost'
+            
+        # Contractor questions
+        contractor_terms = ['contractor', 'company', 'implement', 'award', 'won', 'bid']
+        if any(term in query_lower for term in contractor_terms):
+            return 'contractor'
+            
+        # Project type questions
+        type_terms = ['type', 'kind', 'category', 'classification']
+        if any(term in query_lower for term in type_terms):
+            return 'type'
+            
+        # Default to general information
+        return 'general'
     
     def _create_user_prompt(self, query: str, context: str) -> str:
         """Create the user prompt with query and context."""

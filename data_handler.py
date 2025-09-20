@@ -118,10 +118,28 @@ class FloodControlDataHandler:
         )
         self.tfidf_matrix = self.vectorizer.fit_transform(search_texts)
     
-    def search_relevant_records(self, query: str, top_k: int = 5) -> List[Dict[str, Any]]:
-        """Search for records most relevant to the query with intelligent processing."""
-        if self.df is None or self.vectorizer is None:
+    def search_relevant_records(self, query: str, top_k: int = 10) -> List[Dict[str, Any]]:
+        """
+        Search for records most relevant to the query with intelligent processing.
+        
+        Args:
+            query: The search query
+            top_k: Maximum number of results to return (default: 10)
+            
+        Returns:
+            List of matching records as dictionaries
+        """
+        if self.df is None or self.vectorizer is None or not query.strip():
             return []
+            
+        # Parse the query for number of results requested
+        import re
+        num_match = re.search(r'(?:show|list|top|first|get)\s+(?:me\s+)?(\d+)(?:\s+results?)?', query, re.IGNORECASE)
+        if num_match:
+            try:
+                top_k = min(int(num_match.group(1)), 50)  # Cap at 50 results for performance
+            except (ValueError, IndexError):
+                pass
         
         try:
             query_lower = query.lower()

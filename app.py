@@ -129,7 +129,18 @@ def chat_ui():
         st.rerun()
     if ask and query.strip():
         with st.spinner("Processing..."):
-            records = st.session_state.data_handler.search_relevant_records(query, top_k=5)
+            # Parse the query for number of results requested
+            import re
+            num_match = re.search(r'(?:show|list|top|first|get)\s+(?:me\s+)?(\d+)(?:\s+results?)?', query, re.IGNORECASE)
+            top_k = 10  # Default number of results
+            
+            if num_match:
+                try:
+                    top_k = min(int(num_match.group(1)), 50)  # Cap at 50 results for performance
+                except (ValueError, IndexError):
+                    pass
+                    
+            records = st.session_state.data_handler.search_relevant_records(query, top_k=top_k)
             context = st.session_state.data_handler.get_summary_stats()
             answer = st.session_state.llm_handler.generate_response(query, records, context)
             st.session_state.chat_history.append((query, answer))
