@@ -8,6 +8,7 @@ enableCORS = false
 enableXsrfProtection = true
 maxUploadSize = 200
 baseUrlPath = "/"
+fileWatcherType = "none"
 
 [browser]
 gatherUsageStats = false
@@ -28,15 +29,10 @@ magicEnabled = true
 installTracer = false
 fixMatplotlib = true
 
-# Mobile optimization settings
 [ui]
 hideTopBar = false
-
-# Disable file watcher for better performance in cloud
-[server]
-fileWatcherType = "none"
+hideSidebarNav = false
 
 # Disable websocket compression for better performance
 [server.enableWebsocketCompression]
-false = true
-hideSidebarNav = false
+enabled = false
