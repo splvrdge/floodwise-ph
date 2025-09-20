@@ -1,6 +1,6 @@
 # Core dependencies
 transformers>=4.30.0
-torch>=2.0.0
+torch>=2.0.0,<3.0.0  # Pin to major version 2
 sentencepiece>=0.1.99
 accelerate>=0.20.0
 
@@ -9,15 +9,24 @@ fuzzywuzzy>=0.18.0
 python-Levenshtein>=0.12.2
 
 # Web framework
-streamlit>=1.24.0
+streamlit>=1.24.0,<2.0.0  # Pin to major version 1
 
 # Utilities
 python-dotenv>=1.0.0
 httpx>=0.24.0
-pandas>=2.0.0
-numpy>=1.24.0
-scikit-learn>=1.2.0
+pandas>=2.0.0,<3.0.0  # Pin to major version 2
+numpy>=1.24.0,<2.0.0  # Pin to major version 1
+scikit-learn>=1.2.0,<2.0.0  # Pin to major version 1
 
 # OpenAI (optional)
-openai>=1.0.0
-python-Levenshtein>=0.12.0  # For faster fuzzy matching
+openai>=1.0.0,<2.0.0  # Pin to major version 1
+
+# Additional dependencies for Streamlit Cloud
+protobuf<4.0.0  # Required for some Transformers models
+typing-extensions>=4.0.0  # Required for newer Python versions
+
+# Performance optimizations
+psutil>=5.9.0  # For resource monitoring
+
+# Ensure only one version of python-Levenshtein
+python-Levenshtein>=0.12.2,<1.0.0  # Pin to major version 0

@@ -27,7 +27,23 @@ A web application that uses Large Language Models (LLM) to answer natural langua
 
 ### Option 2: Local Development
 
-#### Using Conda (Recommended)
+#### Using the Improved Runner (Recommended)
+
+1. **Install dependencies**:
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+2. **Run the application**:
+   ```bash
+   ./run_app.py
+   ```
+   - The app will be available at `http://localhost:8501`
+   - Press `Ctrl+C` to stop the server
+
+   This method provides better process control and error handling.
+
+#### Using Conda (Alternative)
 1. **Create conda environment**
    ```bash
    cd "A1 - LLM"

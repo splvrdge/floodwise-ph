@@ -210,9 +210,38 @@ def check_system_resources():
     except Exception as e:
         logger.warning(f"Could not check system resources: {e}")
 
+def configure_streamlit():
+    """Configure Streamlit settings for both local and cloud environments."""
+    import os
+    import streamlit as st
+    
+    # Check if running in Streamlit Cloud
+    IS_STREAMLIT_CLOUD = 'STREAMLIT_SERVER_RUN_ON_UPDATE' in os.environ
+    
+    if not IS_STREAMLIT_CLOUD:
+        # Local development settings
+        os.environ['STREAMLIT_SERVER_HEADLESS'] = 'true'
+        os.environ['BROWSER'] = 'false'
+        
+        # Configure server settings for local
+        st.config.set_option('server.headless', True)
+        st.config.set_option('server.enableCORS', True)
+        st.config.set_option('server.enableXsrfProtection', True)
+        st.config.set_option('server.fileWatcherType', 'none')
+        st.config.set_option('server.port', 8501)
+    else:
+        # Streamlit Cloud specific settings
+        st.config.set_option('server.address', '0.0.0.0')
+        
+    # Disable warning about file downloader
+    st.set_option('deprecation.showfileUploaderEncoding', False)
+
 def main():
     """Main application function."""
     try:
+        # Configure Streamlit first
+        configure_streamlit()
+        
         # Set page config - MUST be the first Streamlit command
         st.set_page_config(
             page_title="Flood Control Projects Assistant", 

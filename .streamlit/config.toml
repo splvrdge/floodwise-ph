@@ -3,12 +3,15 @@ developmentMode = false
 
 [server]
 headless = true
+port = 8501
 enableCORS = false
-enableXsrfProtection = false
+enableXsrfProtection = true
 maxUploadSize = 200
+baseUrlPath = "/"
 
 [browser]
 gatherUsageStats = false
+serverAddress = "0.0.0.0"
 
 [theme]
 primaryColor = "#667eea"
@@ -18,7 +21,7 @@ textColor = "#262730"
 font = "sans serif"
 
 [client]
-showErrorDetails = false
+showErrorDetails = true
 
 [runner]
 magicEnabled = true
@@ -28,4 +31,12 @@ fixMatplotlib = true
 # Mobile optimization settings
 [ui]
 hideTopBar = false
+
+# Disable file watcher for better performance in cloud
+[server]
+fileWatcherType = "none"
+
+# Disable websocket compression for better performance
+[server.enableWebsocketCompression]
+false = true
 hideSidebarNav = false
