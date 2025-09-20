@@ -2,12 +2,34 @@ import json
 import logging
 import os
 import re
+import sys
 from typing import Any, Dict, List, Optional, Tuple, Union, Literal
+
 import httpx
-import openai
 import streamlit as st
-from dotenv import load_dotenv
 from enum import Enum
+from dotenv import load_dotenv
+
+# Add the current directory to the path to import local modules
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+
+# Try to import Hugging Face handler
+try:
+    from hf_handler import HFModelHandler
+    HUGGINGFACE_AVAILABLE = True
+except ImportError:
+    HUGGINGFACE_AVAILABLE = False
+    logger = logging.getLogger(__name__)
+    logger.warning("Hugging Face models not available. Install with: pip install transformers torch")
+
+# Try to import OpenAI
+OPENAI_AVAILABLE = False
+try:
+    import openai
+    OPENAI_AVAILABLE = True
+except ImportError:
+    logger = logging.getLogger(__name__)
+    logger.warning("OpenAI not available. Install with: pip install openai")
 
 # Configure logging
 logging.basicConfig(
@@ -27,7 +49,11 @@ class QueryType(Enum):
     UNKNOWN = "unknown"
 
 class LLMHandler:
-    """Handles LLM interactions for generating responses about flood control projects."""
+    """Handles LLM interactions for generating responses about flood control projects.
+    
+    This class provides a unified interface for different LLM backends (OpenAI, Hugging Face, etc.)
+    with automatic fallback to available models.
+    """
     
     # Common greetings and small talk phrases
     GENERAL_PHRASES = [
@@ -42,10 +68,50 @@ class LLMHandler:
         "flood control", "flood mitigation", "drainage system"
     ]
     
-    def __init__(self):
+    def __init__(self, prefer_local: bool = False):
+        """Initialize the LLM handler.
+        
+        Args:
+            prefer_local: If True, will prefer local models even if OpenAI is available.
+        """
         self.client = None
-        self.model = "gpt-3.5-turbo"
-        self._initialize_client()
+        self.model = "gpt-3.5-turbo"  # Default model for OpenAI
+        # Using TinyLlama as it's lightweight and good for 1-2 users
+        self.hf_model = "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
+        self.prefer_local = prefer_local
+        self.model_type = None  # Will be 'openai', 'huggingface', or None
+        
+        # Try to initialize the preferred model
+        if not self.prefer_local and OPENAI_AVAILABLE:
+            self._initialize_client()
+        elif HUGGINGFACE_AVAILABLE:
+            self._initialize_hf_client()
+        else:
+            logger.warning("No LLM backend available. Install either OpenAI or Hugging Face models.")
+    
+    def _initialize_client(self):
+        """Initialize the OpenAI client."""
+        try:
+            logger.info("Initializing OpenAI client...")
+            self.client = openai.ChatCompletion()
+            self.model_type = "openai"
+            logger.info("OpenAI client initialized successfully")
+        except Exception as e:
+            logger.error(f"Failed to initialize OpenAI client: {e}")
+            self.client = None
+            self.model_type = None
+    
+    def _initialize_hf_client(self):
+        """Initialize the Hugging Face model client."""
+        try:
+            logger.info("Initializing Hugging Face model...")
+            self.client = HFModelHandler(model_name=self.hf_model)
+            self.model_type = "huggingface"
+            logger.info("Hugging Face model initialized successfully")
+        except Exception as e:
+            logger.error(f"Failed to initialize Hugging Face model: {e}")
+            self.client = None
+            self.model_type = None
     
     def detect_query_type(self, query: str) -> QueryType:
         """
@@ -177,117 +243,106 @@ class LLMHandler:
         Returns:
             str: The generated response in natural language
         """
-        if not query or not query.strip():
-            return "I didn't catch that. Could you please rephrase your question?"
-        
-        # Initialize records if not provided
+        # Ensure we have a valid query
+        if not query or not isinstance(query, str) or not query.strip():
+            return "I didn't receive a valid query. Could you please rephrase your question?"
+
+        # Initialize records if None
         if records is None:
             records = []
-            
-        # Detect the type of query
+
+        # Detect query type
         query_type = self.detect_query_type(query)
-        logger.info(f"Detected query type: {query_type}")
-        
+
         # Handle general conversation
         if query_type == QueryType.GENERAL_CONVERSATION:
             return self.handle_general_conversation(query)
-            
+
         # Handle unknown query types
         if query_type == QueryType.UNKNOWN:
             return ("I'm not sure if this is related to flood control projects. "
                    "I can help you find information about flood control projects in the Philippines, "
                    "including details about costs, locations, contractors, and project status. "
                    "Could you rephrase your question?")
-        
+
         # For flood control queries, check if we have records
         if not records and query_type != QueryType.GENERAL_CONVERSATION:
             return self._generate_no_results_response(query)
-            
+
         # Prepare context if not provided
         if context is None:
             context = {}
+
+        # Ensure client is initialized
+        if not hasattr(self, 'client') or self.client is None:
+            # Try to initialize preferred client first
+            if not self.prefer_local and OPENAI_AVAILABLE:
+                self._initialize_client()
+            elif HUGGINGFACE_AVAILABLE:
+                self._initialize_hf_client()
+            
+            # If still not initialized, try the other option
+            if (not hasattr(self, 'client') or self.client is None) and not self.prefer_local and HUGGINGFACE_AVAILABLE:
+                self._initialize_hf_client()
+            
+            if not hasattr(self, 'client') or self.client is None:
+                logger.error("Failed to initialize any LLM client")
+                return self._format_general_response(query, records)
         
-        # Use LLM to generate a natural response based on the data
         try:
-            # Format the records into a more natural, readable string
-            records_str = "\n".join([
-                f"- {record.get('ProjectDescription', 'A flood control project')} "
-                f"in {record.get('Municipality', 'an unspecified location')}, "
-                f"{record.get('Province', 'an unspecified province')} "
-                f"(Cost: ₱{float(record.get('ContractCost', 0)):,.2f}, "
-                f"Contractor: {record.get('Contractor', 'Not specified')}, "
-                f"Status: {record.get('Status', 'Unknown')})"
-                for record in records[:5]  # Limit to first 5 records
-            ])
+            # Prepare the prompt
+            prompt = self._prepare_prompt(query, records, context, query_type)
             
-            # Generate a natural language response using the LLM
-            response = self.client.chat.completions.create(
-                model=self.model,
-                messages=[
-                    {
-                        "role": "system",
-                        "content": (
-                            "You are a helpful assistant that provides information about flood control projects in the Philippines. "
-                            "Use the provided project data to answer the user's question in a clear, natural way. "
-                            "Be concise but informative. If the data doesn't contain the exact information requested, "
-                            "say so and provide what information is available. Format numbers clearly (e.g., ₱1,234,567.89)."
-                        )
-                    },
-                    {
-                        "role": "user",
-                        "content": (
-                            f"Question: {query}\n\n"
-                            f"Here are some relevant projects from our database:\n{records_str}\n\n"
-                            "Please provide a helpful, natural response based on this information. "
-                            "If the question asks for specific details not in the data, explain what information is available. "
-                            "Use markdown for formatting if helpful, but keep it simple."
-                        )
-                    }
-                ],
-                temperature=0.3,
-                max_tokens=500,
-                top_p=0.9,
-                frequency_penalty=0.5,
-                presence_penalty=0.5
-            )
-            
-            return response.choices[0].message.content.strip()
-            
-        except Exception as e:
-            logger.error(f"Error generating response: {e}")
-            # Fall back to structured response if LLM fails
-            try:
-                response_type = self._determine_response_type(query, records)
-                if response_type == "cost":
-                    return self._format_cost_response(query, records)
-                elif response_type == "contractor":
-                    return self._format_contractor_response(query, records)
-                elif response_type == "location":
-                    return self._format_standard_location_response(query, records)
-                else:
-                    return self._format_general_response(query, records)
-            except Exception as inner_e:
-                logger.error(f"Fallback response generation failed: {inner_e}")
-                return "I'm having trouble processing your request right now. Please try again later or rephrase your question."
-                
-        except Exception as e:
-            logger.error(f"Error generating response: {e}", exc_info=True)
-            try:
-                # Try a simple fallback using the LLM directly
-                prompt = self._prepare_prompt(query, records, context, query_type)
-                response = client.chat.completions.create(
+            if self.model_type == "openai":
+                # Generate response using the OpenAI API
+                response = self.client.chat.completions.create(
                     model=self.model,
-                    messages=[{"role": "user", "content": prompt}],
+                    messages=[
+                        {"role": "system", "content": self._get_system_prompt(query_type)},
+                        {"role": "user", "content": prompt}
+                    ],
                     temperature=0.3,
-                    max_tokens=500,
+                    max_tokens=1000,
                     top_p=0.9,
                     frequency_penalty=0.5,
                     presence_penalty=0.5
                 )
-                return response.choices[0].message.content.strip()
+                
+                if response and hasattr(response, 'choices') and len(response.choices) > 0:
+                    return response.choices[0].message.content.strip()
+                else:
+                    logger.error("Unexpected response format from OpenAI API")
+                    return self._format_general_response(query, records)
+                    
+            elif self.model_type == "huggingface":
+                # Generate response using the Hugging Face model
+                system_prompt = self._get_system_prompt(query_type)
+                full_prompt = f"""{system_prompt}
+                
+                {prompt}
+                
+                Assistant:"""
+                
+                response = self.client.generate_response(
+                    full_prompt,
+                    max_length=1000,
+                    temperature=0.7,
+                    top_p=0.9
+                )
+                return response.strip()
+                
+            else:
+                logger.error(f"Unknown model type: {self.model_type}")
+                return self._format_general_response(query, records)
+                
+        except Exception as e:
+            logger.error(f"Error generating response: {e}")
+            try:
+                # Try to provide a fallback response based on the query type
+                return self._format_general_response(query, records)
             except Exception as inner_e:
                 logger.error(f"Fallback response generation also failed: {inner_e}")
-                return self._fallback_response(query, records)
+                return "I'm having trouble processing your request right now. Please try again later or rephrase your question."
     
     def _initialize_client(self):
         """Initialize OpenAI client with multiple fallback strategies."""
@@ -338,37 +393,52 @@ class LLMHandler:
     
     def _init_with_custom_http_client(self, api_key: str):
         """Initialize with custom HTTP client to avoid proxies issue."""
-        # Create custom HTTP client without problematic parameters
-        http_client = httpx.Client(
-            timeout=httpx.Timeout(30.0),
-            limits=httpx.Limits(max_keepalive_connections=5, max_connections=10),
-            follow_redirects=True
-        )
-        
-        return openai.OpenAI(
-            api_key=api_key,
-            http_client=http_client
-        )
+        try:
+            # Create custom HTTP client without problematic parameters
+            http_client = httpx.Client(
+                timeout=httpx.Timeout(30.0),
+                limits=httpx.Limits(max_keepalive_connections=5, max_connections=10),
+                follow_redirects=True
+            )
+            
+            self.client = openai.OpenAI(
+                api_key=api_key,
+                http_client=http_client
+            )
+            return self.client
+        except Exception as e:
+            logger.error(f"Error initializing custom HTTP client: {e}")
+            raise
     
     def _init_with_default_client(self, api_key: str):
         """Initialize with default OpenAI client."""
-        return openai.OpenAI(api_key=api_key)
+        try:
+            self.client = openai.OpenAI(api_key=api_key)
+            return self.client
+        except Exception as e:
+            logger.error(f"Error initializing default client: {e}")
+            raise
     
     def _init_with_legacy_approach(self, api_key: str):
         """Initialize using legacy OpenAI approach."""
-        # Set API key globally for legacy compatibility
-        openai.api_key = api_key
-        
-        # Create a wrapper that mimics the new client interface
-        class LegacyWrapper:
-            def __init__(self):
-                self.chat = self
-                self.completions = self
+        try:
+            # Set API key globally for legacy compatibility
+            openai.api_key = api_key
             
-            def create(self, **kwargs):
-                return openai.ChatCompletion.create(**kwargs)
-        
-        return LegacyWrapper()
+            # Create a wrapper that mimics the new client interface
+            class LegacyWrapper:
+                def __init__(self):
+                    self.chat = self
+                    self.completions = self
+                
+                def create(self, **kwargs):
+                    return openai.ChatCompletion.create(**kwargs)
+            
+            self.client = LegacyWrapper()
+            return self.client
+        except Exception as e:
+            logger.error(f"Error initializing legacy client: {e}")
+            raise
     
     def _get_system_prompt(self, query_type: str) -> str:
         """Get the appropriate system prompt based on query type."""
@@ -1085,62 +1155,63 @@ sufficient information to fully answer the question, please indicate what inform
     def _format_standard_location_response(self, query: str, records: List[Dict[str, Any]]) -> str:
         """Generate a natural language response about projects in specific locations."""
         if not records:
-            return "I couldn't find any projects in the specified location(s)."
+            return self._generate_no_results_response(query)
             
-        # Get unique locations
-        locations = {}
-        for r in records:
-            loc_key = (r.get('Municipality'), r.get('Province'))
-            if loc_key not in locations:
-                locations[loc_key] = []
-            locations[loc_key].append(r)
-            
-        response = "Here's what I found about flood control projects "
+        # Extract unique locations from records
+        locations = list(set(record.get('Location', 'Unknown Location') for record in records))
+        location_str = ", ".join(locations) if locations else "the specified location"
         
-        if len(locations) == 1:
-            loc_name = f"{list(locations.keys())[0][0]}, {list(locations.keys())[0][1]}"
-            response += f"in {loc_name}:\n\n"
-        else:
-            response += f"across {len(locations)} different locations. Here are the details:\n\n"
-        
-        # Calculate statistics
-        total_cost = sum(float(r.get('ContractCost', 0)) for r in records if r.get('ContractCost'))
-        project_count = len(records)
-        avg_cost = total_cost / project_count if project_count > 0 else 0
-        
-        # Add summary information
-        if total_cost > 0:
-            response += f"There {'is' if project_count == 1 else 'are'} {project_count} project{'s' if project_count != 1 else ''} "
-            response += f"with a total investment of approximately ₱{total_cost:,.2f}. "
-            response += f"The average project cost is around ₱{avg_cost:,.2f}.\n\n"
+        # Initialize response
+        response = [f"I found {len(records)} flood control project{'s' if len(records) > 1 else ''} in {location_str}."]
         
         # Group projects by location
-        for (municipality, province), loc_records in list(locations.items())[:5]:  # Limit to 5 locations
-            loc_name = f"{municipality if municipality else 'Unknown location'}, {province if province else 'unknown province'}"
-            loc_cost = sum(float(r.get('ContractCost', 0)) for r in loc_records if r.get('ContractCost'))
+        projects_by_location = {}
+        for record in records:
+            loc = record.get('Location', 'Unknown Location')
+            if loc not in projects_by_location:
+                projects_by_location[loc] = []
+            projects_by_location[loc].append(record)
+        
+        # Add project details for each location
+        for location, loc_records in projects_by_location.items():
+            # Calculate total investment for this location
+            loc_cost = sum(
+                float(r.get('ContractCost', r.get('Cost', 0))) 
+                for r in loc_records 
+                if r.get('ContractCost') or r.get('Cost')
+            )
             loc_count = len(loc_records)
             
-            response += f"In {loc_name}, there {'is' if loc_count == 1 else 'are'} {loc_count} project{'s' if loc_count != 1 else ''} "
-            response += f"with a total investment of ₱{loc_cost:,.2f}. "
+            # Add location header with summary
+            response.append(f"\nIn {location} (Total: {loc_count} project{'s' if loc_count != 1 else ''}, "
+                          f"Investment: ₱{loc_cost:,.2f}):")
             
-            # Add some project examples
-            if loc_count <= 3:
-                projects = ", ".join(f"{r.get('ProjectDescription', 'a flood control project')} (₱{float(r.get('ContractCost', 0)):,.2f})" 
-                                    for r in loc_records[:3])
-                response += f"These include: {projects}."
-            else:
-                sample = ", ".join(f"{r.get('ProjectDescription', 'a project')} (₱{float(r.get('ContractCost', 0)):,.2f})" 
-                                  for r in loc_records[:2])
-                response += f"These include {sample}, and {loc_count - 2} more projects."
+            # Add project details
+            for i, project in enumerate(loc_records[:5], 1):  # Show up to 5 projects per location
+                name = project.get('ProjectName', project.get('ProjectDescription', 'Unnamed Project'))
+                cost = float(project.get('ContractCost', project.get('Cost', 0)))
+                contractor = project.get('Contractor', 'Contractor not specified')
+                status = project.get('Status', 'Status not specified')
+                
+                project_info = f"  {i}. {name}"
+                if cost > 0:
+                    project_info += f" (₱{cost:,.2f})"
+                if contractor != "Contractor not specified":
+                    project_info += f" by {contractor}"
+                if status != "Status not specified":
+                    project_info += f" - {status}"
+                
+                response.append(project_info)
             
-            response += "\n\n"
+            # Add note if there are more projects
+            if len(loc_records) > 5:
+                response.append(f"  ... and {len(loc_records) - 5} more projects")
         
-        # Add a note if there are more locations
-        if len(locations) > 5:
-            response += f"There are {len(locations) - 5} additional locations with flood control projects. "
-            response += "Would you like me to provide more details about any specific location?"
+        # Add note if there are many locations
+        if len(locations) > 3:
+            response.append("\nYou can ask for more details about any specific location or project.")
         
-        return response
+        return "\n".join(response)
     
     def _format_comparison_response(self, query: str, records: List[Dict[str, Any]]) -> str:
         """Generate a natural language comparison of different entities based on project data."""

@@ -327,7 +327,7 @@ class FloodControlDataHandler:
             
             # Extract location and year information
             try:
-                location_terms = self._extract_location_terms(query)
+                location_terms = self._extract_location(query)
                 year, date_range = self._extract_years(query)
                 
                 logger.debug(f"Extracted location terms: {location_terms}")
