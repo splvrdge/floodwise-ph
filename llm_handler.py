@@ -18,27 +18,93 @@ class LLMHandler:
     
     def _initialize_client(self):
         """Initialize OpenAI client."""
-        # Try to get API key from Streamlit secrets first, then environment variables
         api_key = None
         
-        # Check Streamlit secrets (for Streamlit Cloud deployment)
+        # Debug: Check what's available in secrets
         try:
-            api_key = st.secrets["OPENAI_API_KEY"]
-        except (KeyError, FileNotFoundError):
-            # Fall back to environment variables (for local development)
+            # Try to access secrets
+            if hasattr(st, 'secrets') and st.secrets:
+                # Check if OPENAI_API_KEY exists in secrets
+                if "OPENAI_API_KEY" in st.secrets:
+                    api_key = st.secrets["OPENAI_API_KEY"]
+                    st.success("✅ API key found in Streamlit secrets")
+                else:
+                    st.warning("⚠️ OPENAI_API_KEY not found in Streamlit secrets")
+                    # Show available keys for debugging
+                    available_keys = list(st.secrets.keys()) if st.secrets else []
+                    if available_keys:
+                        st.info(f"Available secret keys: {available_keys}")
+            else:
+                st.warning("⚠️ Streamlit secrets not available")
+        except Exception as e:
+            st.error(f"Error accessing Streamlit secrets: {str(e)}")
+        
+        # Fallback to environment variables if no API key found
+        if not api_key:
             api_key = os.getenv('OPENAI_API_KEY')
+            if api_key:
+                st.info("✅ API key found in environment variables")
         
         if api_key:
-            try:
-                self.client = openai.OpenAI(api_key=api_key)
-            except Exception as e:
-                st.error(f"⚠️ Failed to initialize OpenAI client: {str(e)}")
-                st.info("The app will continue to work with basic functionality (no AI responses).")
-                self.client = None
+            # Try multiple initialization strategies to handle httpx compatibility
+            strategies = [
+                ("Custom HTTP Client", self._init_with_custom_http_client),
+                ("Default Client", self._init_with_default_client),
+                ("Legacy Client", self._init_with_legacy_approach)
+            ]
+            
+            for strategy_name, strategy_func in strategies:
+                try:
+                    self.client = strategy_func(api_key)
+                    if self.client:
+                        st.success(f"✅ OpenAI client initialized successfully using {strategy_name}")
+                        return
+                except Exception as e:
+                    st.warning(f"❌ {strategy_name} failed: {str(e)}")
+                    continue
+            
+            # If all strategies fail
+            st.error("⚠️ All OpenAI initialization strategies failed")
+            st.info("The app will continue with basic functionality (no AI responses)")
+            self.client = None
         else:
-            st.warning("⚠️ OpenAI API key not found.")
-            st.info("💡 **For Streamlit Cloud**: Add OPENAI_API_KEY to app secrets in your Streamlit dashboard")
-            st.info("💡 **For Local Development**: Add OPENAI_API_KEY to your .env file")
+            st.error("⚠️ No OpenAI API key found in secrets or environment")
+    
+    def _init_with_custom_http_client(self, api_key: str):
+        """Initialize with custom HTTP client to avoid proxies issue."""
+        import httpx
+        
+        # Create custom HTTP client without problematic parameters
+        http_client = httpx.Client(
+            timeout=httpx.Timeout(30.0),
+            limits=httpx.Limits(max_keepalive_connections=5, max_connections=10),
+            follow_redirects=True
+        )
+        
+        return openai.OpenAI(
+            api_key=api_key,
+            http_client=http_client
+        )
+    
+    def _init_with_default_client(self, api_key: str):
+        """Initialize with default OpenAI client."""
+        return openai.OpenAI(api_key=api_key)
+    
+    def _init_with_legacy_approach(self, api_key: str):
+        """Initialize using legacy OpenAI approach."""
+        # Set API key globally for legacy compatibility
+        openai.api_key = api_key
+        
+        # Create a wrapper that mimics the new client interface
+        class LegacyWrapper:
+            def __init__(self):
+                self.chat = self
+                self.completions = self
+            
+            def create(self, **kwargs):
+                return openai.ChatCompletion.create(**kwargs)
+        
+        return LegacyWrapper()
     
     def generate_response(self, query: str, relevant_records: List[Dict[str, Any]], 
                          context_info: Dict[str, Any] = None) -> str:
