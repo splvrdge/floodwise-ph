@@ -385,7 +385,6 @@ class FloodControlDataHandler:
             if st.session_state.get('debug_mode', False):
                 st.error(f"Error: {error_msg}")
             return []
-                return []
     
     def _extract_location(self, query: str) -> str:
         """Extract location mentions from query."""
