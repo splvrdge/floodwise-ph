@@ -10,9 +10,12 @@ A web application that uses Large Language Models (LLM) to answer natural langua
 - **Natural Language Queries**: Ask questions in plain English about the projects
 - **Intelligent Search**: TF-IDF based semantic search through project records
 - **LLM Integration**: OpenAI GPT integration for generating contextual responses
+- **📱 Mobile-Responsive Design**: Optimized for smartphones, tablets, and desktop
 - **Clean Interface**: Simple, user-friendly Streamlit interface
 - **Real-time Processing**: Dynamic responses generated from comprehensive dataset
 - **Data Exploration**: Advanced filtering and data exploration tools
+- **🚀 PWA Support**: Install as a mobile app for offline-like experience
+- **Touch-Friendly UI**: Optimized for touch interactions and mobile gestures
 
 ## 🚀 Quick Start
 
@@ -172,6 +175,8 @@ A1 - LLM/
 ├── streamlit_app.py            # Deployment entry point
 ├── data_handler.py             # CSV data processing and search
 ├── llm_handler.py              # LLM integration and response generation
+├── mobile_utils.py             # Mobile optimization utilities
+├── test_mobile.py              # Mobile responsiveness testing
 ├── requirements.txt            # Python dependencies
 ├── .env.example                # Environment variables template
 ├── .gitignore                  # Git ignore rules
@@ -185,6 +190,46 @@ A1 - LLM/
 3. **Query Processing**: User questions are processed to find relevant records
 4. **Response Generation**: LLM generates contextual responses using found data
 5. **Display**: Results are presented in a conversational chat interface
+
+## 📱 Mobile Responsiveness
+
+FloodWise PH is fully optimized for mobile devices with the following features:
+
+### 🎯 Mobile-First Design
+- **Responsive Layout**: Adapts to screen sizes from 320px to 1200px+
+- **Touch-Friendly Interface**: Minimum 44px touch targets for all interactive elements
+- **Optimized Typography**: 16px minimum font size to prevent zoom on iOS
+- **Mobile Navigation**: Collapsible sidebar and bottom navigation for easy access
+
+### 📱 Device Support
+- **Smartphones**: iPhone, Android phones (portrait & landscape)
+- **Tablets**: iPad, Android tablets (portrait & landscape)  
+- **Desktop**: Full desktop experience with responsive breakpoints
+
+### 🚀 Progressive Web App (PWA)
+- **Install Prompt**: Add to home screen for app-like experience
+- **Offline Support**: Basic offline functionality
+- **Mobile Meta Tags**: Proper viewport and mobile browser optimization
+- **App Icons**: Custom icons for different device types
+
+### 🎨 Mobile UI Features
+- **Quick Questions**: Tap-friendly preset questions for common queries
+- **Responsive Chat**: Mobile-optimized chat bubbles and scrolling
+- **Touch Gestures**: Optimized for swipe, tap, and pinch interactions
+- **Mobile Forms**: Large input fields and buttons for easy interaction
+
+### 🧪 Testing Mobile Responsiveness
+
+Run the mobile test utility:
+```bash
+streamlit run test_mobile.py
+```
+
+Or manually test using browser developer tools:
+1. Open DevTools (F12)
+2. Toggle device toolbar (Ctrl+Shift+M)
+3. Test different viewport sizes
+4. Verify touch interactions work properly
 
 ## 🛠️ Technical Details
 
@@ -205,6 +250,13 @@ A1 - LLM/
 - Session state management
 - Chat history and real-time updates
 - Advanced data exploration features
+- Mobile-responsive design implementation
+
+### Mobile Utilities (`mobile_utils.py`)
+- PWA manifest and service worker setup
+- Mobile-specific CSS optimizations
+- Touch interaction improvements
+- Viewport and meta tag management
 
 ## 🚨 Troubleshooting
 

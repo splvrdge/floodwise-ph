@@ -5,12 +5,27 @@ developmentMode = false
 headless = true
 enableCORS = false
 enableXsrfProtection = false
+maxUploadSize = 200
 
 [browser]
 gatherUsageStats = false
 
 [theme]
-primaryColor = "#1f77b4"
+primaryColor = "#667eea"
 backgroundColor = "#ffffff"
-secondaryBackgroundColor = "#f0f2f6"
+secondaryBackgroundColor = "#f8f9fa"
 textColor = "#262730"
+font = "sans serif"
+
+[client]
+showErrorDetails = false
+
+[runner]
+magicEnabled = true
+installTracer = false
+fixMatplotlib = true
+
+# Mobile optimization settings
+[ui]
+hideTopBar = false
+hideSidebarNav = false
