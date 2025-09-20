@@ -726,6 +726,33 @@ class FloodControlDataHandler:
         
         return [analysis_info]
     
+    def get_summary_stats(self) -> Dict[str, Any]:
+        """Get summary statistics for the dataset."""
+        if self.df is None or self.df.empty:
+            return {
+                'total_records': 0,
+                'columns': [],
+                'numeric_columns': [],
+                'text_columns': [],
+                'missing_data': {},
+                'unique_regions': 0,
+                'unique_provinces': 0,
+                'unique_contractors': 0,
+                'date_range': 'N/A'
+            }
+        
+        return {
+            'total_records': len(self.df),
+            'columns': list(self.df.columns),
+            'numeric_columns': self.df.select_dtypes(include=[np.number]).columns.tolist(),
+            'text_columns': self.text_columns,
+            'missing_data': self.df.isnull().sum().to_dict(),
+            'unique_regions': self.df['Region'].nunique() if 'Region' in self.df.columns else 0,
+            'unique_provinces': self.df['Province'].nunique() if 'Province' in self.df.columns else 0,
+            'unique_contractors': self.df['Contractor'].nunique() if 'Contractor' in self.df.columns else 0,
+            'date_range': f"{self.df['InfraYear'].min()}-{self.df['InfraYear'].max()}" if 'InfraYear' in self.df.columns else 'N/A'
+        }
+    
     def get_column_info(self) -> Dict[str, List[str]]:
         """Get information about available columns and sample values."""
         if self.df is None:

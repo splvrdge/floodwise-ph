@@ -377,11 +377,28 @@ if 'data_loaded' not in st.session_state:
 
 # Auto-load the dataset on first run
 if not st.session_state.data_loaded:
-    dataset_path = "Dataset/flood-control-projects-table_2025-09-20.csv"
-    if os.path.exists(dataset_path):
-        with st.spinner("Loading flood control projects dataset..."):
-            if st.session_state.data_handler.load_csv_from_path(dataset_path):
-                st.session_state.data_loaded = True
+    # Try multiple possible paths
+    possible_paths = [
+        "Dataset/flood-control-projects-table_2025-09-20.csv",
+        "./Dataset/flood-control-projects-table_2025-09-20.csv",
+        os.path.join(os.path.dirname(__file__), "Dataset", "flood-control-projects-table_2025-09-20.csv")
+    ]
+    
+    dataset_loaded = False
+    for dataset_path in possible_paths:
+        if os.path.exists(dataset_path):
+            try:
+                with st.spinner("Loading flood control projects dataset..."):
+                    if st.session_state.data_handler.load_csv_from_path(dataset_path):
+                        st.session_state.data_loaded = True
+                        dataset_loaded = True
+                        break
+            except Exception as e:
+                st.error(f"Error loading dataset from {dataset_path}: {str(e)}")
+                continue
+    
+    if not dataset_loaded:
+        st.warning("Dataset file not found. Please ensure the CSV file is in the Dataset folder.")
 
 def render_mobile_header():
     """Render mobile-optimized header."""
@@ -411,16 +428,25 @@ def render_mobile_sidebar():
         # Data information
         if st.session_state.data_loaded:
             with st.expander("📊 Dataset Info", expanded=False):
-                stats = st.session_state.data_handler.get_summary_stats()
-                st.markdown(f"""
-                <div class="status-success">
-                    ✅ <strong>Dataset Loaded</strong><br>
-                    📊 {stats['total_records']:,} records<br>
-                    📋 {len(stats['columns'])} columns<br>
-                    🌏 All PH regions<br>
-                    📅 2021-2024 period
-                </div>
-                """, unsafe_allow_html=True)
+                try:
+                    stats = st.session_state.data_handler.get_summary_stats()
+                    st.markdown(f"""
+                    <div class="status-success">
+                        ✅ <strong>Dataset Loaded</strong><br>
+                        📊 {stats['total_records']:,} records<br>
+                        📋 {len(stats['columns'])} columns<br>
+                        🌏 {stats['unique_regions']} regions<br>
+                        📅 {stats['date_range']} period
+                    </div>
+                    """, unsafe_allow_html=True)
+                except Exception as e:
+                    st.markdown(f"""
+                    <div class="status-warning">
+                        ⚠️ <strong>Dataset Loaded</strong><br>
+                        📊 Data available but stats unavailable<br>
+                        Error: {str(e)[:50]}...
+                    </div>
+                    """, unsafe_allow_html=True)
         else:
             st.markdown("""
             <div class="status-warning">
@@ -462,40 +488,37 @@ def render_quick_questions():
     pass
 
 def main():
-    """Main application function."""
-    
-    # Check if we're on mobile (simplified detection)
-    is_mobile = st.session_state.get('is_mobile', False)
-    
-    # Enhanced Header with better typography and icons
-    st.markdown("""
-    <div style="text-align: center; margin-bottom: 2rem;">
-        <h1 style="margin-bottom: 0.5rem;">🌊 FloodWise PH</h1>
-        <p style="font-size: 1.2rem; color: var(--text-secondary); margin-bottom: 0;">
-            <strong>🇵🇭 Philippines Flood Control Intelligence Platform</strong>
-        </p>
-        <p style="color: var(--text-muted); margin-top: 0.5rem;">
-            💡 Ask questions about projects • 🏗️ contractors • 💰 costs • 📍 locations • 🛡️ mitigation works
-        </p>
-    </div>
-    """, unsafe_allow_html=True)
-    
-    # Sidebar for data information and configuration
-    render_mobile_sidebar()
-    
-    # Main chat interface
-    if not st.session_state.data_loaded:
+    """Main application function with error handling."""
+    try:
+        # Enhanced Header with better typography and icons
         st.markdown("""
-        <div class="status-error">
-            ❌ Dataset could not be loaded. Please check if the dataset file exists in the Dataset folder.
+        <div style="text-align: center; margin-bottom: 2rem;">
+            <h1 style="margin-bottom: 0.5rem;">🌊 FloodWise PH</h1>
+            <p style="font-size: 1.2rem; color: var(--text-secondary); margin-bottom: 0;">
+                <strong>🇵🇭 Philippines Flood Control Intelligence Platform</strong>
+            </p>
+            <p style="color: var(--text-muted); margin-top: 0.5rem;">
+                💡 Projects • 🏗️ Contractors • 💰 Costs • 📍 Locations • 🛡️ Mitigation Works
+            </p>
         </div>
         """, unsafe_allow_html=True)
         
-        st.info("💡 Expected file: `Dataset/flood-control-projects-table_2025-09-20.csv`")
+        # Sidebar for data information and configuration
+        render_mobile_sidebar()
         
-        # Show sample questions in mobile-friendly format
-        with st.expander("💡 Sample Questions (Available when dataset is loaded)", expanded=True):
-            sample_questions = [
+        # Main chat interface
+        if not st.session_state.data_loaded:
+            st.markdown("""
+            <div class="status-error">
+                ❌ Dataset could not be loaded. Please check if the dataset file exists in the Dataset folder.
+            </div>
+            """, unsafe_allow_html=True)
+            
+            st.info("💡 Expected file: `Dataset/flood-control-projects-table_2025-09-20.csv`")
+            
+            # Show sample questions in mobile-friendly format
+            with st.expander("💡 Sample Questions (Available when dataset is loaded)", expanded=True):
+                sample_questions = [
                 "What flood control projects are in Region IV-B?",
                 "Show me all projects in Palawan province",
                 "Which contractor has completed the most projects?",
@@ -508,13 +531,13 @@ def main():
                 "Which district engineering offices have the most projects?"
             ]
             
-            for question in sample_questions:
-                st.write(f"• {question}")
+                for question in sample_questions:
+                    st.write(f"• {question}")
+            
+            return
         
-        return
-    
-    # Sample Questions Section (when data is loaded)
-    if not st.session_state.chat_history:  # Only show when no chat history
+        # Sample Questions Section (when data is loaded)
+        if not st.session_state.chat_history:  # Only show when no chat history
         # Organize sample questions by category with better icons
         sample_categories = {
             "💰 Cost & Budget": [
@@ -658,7 +681,16 @@ def main():
             
             st.rerun()
     
-    # Advanced data exploration removed per user request
+        # Advanced data exploration removed per user request
+
+    except Exception as e:
+        st.error(f"An error occurred: {str(e)}")
+        st.markdown("""
+        <div class="status-error">
+            ❌ <strong>Application Error</strong><br>
+            The application encountered an unexpected error. Please refresh the page and try again.
+        </div>
+        """, unsafe_allow_html=True)
 
 def show_footer():
     """Display enhanced footer with cohesive design."""
