@@ -190,17 +190,40 @@ def initialize_handlers():
     if 'chat_history' not in st.session_state:
         st.session_state.chat_history = []
 
+def check_system_resources():
+    """Check if system has enough resources to run the app."""
+    try:
+        import psutil
+        import shutil
+        
+        # Check available RAM (in MB)
+        available_ram = psutil.virtual_memory().available / (1024 * 1024)
+        if available_ram < 2000:  # Less than 2GB
+            st.warning(f"⚠️ Low memory available: {available_ram:.0f}MB. The app might be slow or crash.")
+            
+        # Check disk space (in GB)
+        _, _, free_disk = shutil.disk_usage("/")
+        free_disk_gb = free_disk / (1024 * 1024 * 1024)
+        if free_disk_gb < 2:  # Less than 2GB free
+            st.warning(f"⚠️ Low disk space: {free_disk_gb:.1f}GB free. The app might not work properly.")
+            
+    except Exception as e:
+        logger.warning(f"Could not check system resources: {e}")
+
 def main():
     """Main application function."""
-    # Set page config - MUST be the first Streamlit command
-    st.set_page_config(
-        page_title="Flood Control Projects Assistant", 
-        page_icon="🌊",
-        layout="wide",
-        initial_sidebar_state="expanded"
-    )
-    
     try:
+        # Set page config - MUST be the first Streamlit command
+        st.set_page_config(
+            page_title="Flood Control Projects Assistant", 
+            page_icon="🌊",
+            layout="wide",
+            initial_sidebar_state="expanded"
+        )
+        
+        # Check system resources
+        check_system_resources()
+        
         # Initialize with error handling
         initialize_handlers()
         
@@ -261,4 +284,14 @@ def main():
     )
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as e:
+        import traceback
+        st.error("""
+            ## ⚠️ Critical Error
+            The application encountered an unexpected error and needs to close.
+            Please try refreshing the page. If the problem persists, please report this issue.
+            \n\n**Error Details:**\n""")
+        st.code(f"{str(e)}\n\n{traceback.format_exc()}")
+        st.stop()

@@ -105,8 +105,10 @@ class LLMHandler:
         """Initialize the Hugging Face model client."""
         try:
             logger.info("Initializing Hugging Face model...")
+            # Only show loading spinner at the top level
             with st.spinner("Loading AI model (this may take a minute)..."):
-                self.client = HFModelHandler(model_name=self.hf_model)
+                # Pass show_loading=False to prevent nested loading spinners
+                self.client = HFModelHandler(model_name=self.hf_model, show_loading=False)
                 if not self.client.is_available():
                     raise Exception("Model failed to load properly")
                 self.model_type = "huggingface"

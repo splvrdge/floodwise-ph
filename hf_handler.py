@@ -3,6 +3,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline
 from typing import List, Dict, Any, Optional
 import logging
 import streamlit as st
+from contextlib import nullcontext
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -12,42 +13,59 @@ logger = logging.getLogger(__name__)
 def load_model(model_name: str, device: str):
     """Load the model with caching to prevent reloading on reruns"""
     logger.info(f"Loading model {model_name}...")
-    tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
-    model = AutoModelForCausalLM.from_pretrained(
-        model_name,
-        device_map="auto" if device == "cuda" else None,
-        torch_dtype=torch.bfloat16 if device == "cuda" else torch.float32,
-        trust_remote_code=True
-    )
     
-    if device != "cuda":
-        model = model.to(device)
+    # Set the appropriate torch dtype based on device
+    torch_dtype = torch.bfloat16 if device == "cuda" and torch.cuda.is_bf16_supported() else torch.float32
     
-    # Create a text generation pipeline with TinyLlama-specific settings
-    pipe = pipeline(
-        "text-generation",
-        model=model,
-        tokenizer=tokenizer,
-        max_new_tokens=512,
-        temperature=0.7,
-        top_p=0.9,
-        repetition_penalty=1.1,
-        device=0 if device == "cuda" else -1
-    )
+    try:
+        tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
+        model = AutoModelForCausalLM.from_pretrained(
+            model_name,
+            device_map="auto" if device == "cuda" else None,
+            dtype=torch_dtype,  # Using the new dtype parameter
+            trust_remote_code=True,
+            low_cpu_mem_usage=True  # More efficient memory usage
+        )
+        
+        if device != "cuda":
+            model = model.to(device)
+        
+        # Create a text generation pipeline with TinyLlama-specific settings
+        pipe = pipeline(
+            "text-generation",
+            model=model,
+            tokenizer=tokenizer,
+            max_new_tokens=512,
+            temperature=0.7,
+            top_p=0.9,
+            repetition_penalty=1.1,
+            device=0 if device == "cuda" else -1
+        )
+        
+        return model, tokenizer, pipe
+        
+    except Exception as e:
+        logger.error(f"Error in load_model: {str(e)}")
+        # Provide more specific error messages for common issues
+        if "CUDA out of memory" in str(e):
+            raise RuntimeError("CUDA out of memory. Try using a smaller model or running on CPU.")
+        elif "No space left on device" in str(e):
+            raise RuntimeError("Disk space is full. Please free up space and try again.")
+        raise
     
     return model, tokenizer, pipe
 
 class HFModelHandler:
     """Handler for Hugging Face language models."""
     
-    def __init__(self, model_name: str = "TinyLlama/TinyLlama-1.1B-Chat-v1.0"):
+    def __init__(self, model_name: str = "TinyLlama/TinyLlama-1.1B-Chat-v1.0", show_loading: bool = True):
         """
         Initialize the Hugging Face model handler.
         
         Args:
             model_name: Name of the Hugging Face model to use.
                        Default is "TinyLlama/TinyLlama-1.1B-Chat-v1.0" which is lightweight
-                       and works well for 1-2 users.
+            show_loading: Whether to show loading spinner (set to False if loading is handled by parent)
         """
         self.model_name = model_name
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -56,7 +74,8 @@ class HFModelHandler:
         self.pipeline = None
         
         # Load model with caching
-        with st.spinner("Loading AI model (this may take a minute)..."):
+        spinner = st.spinner("Loading AI model (this may take a minute)...") if show_loading else nullcontext()
+        with spinner:
             try:
                 self.model, self.tokenizer, self.pipeline = load_model(self.model_name, self.device)
             except Exception as e:
