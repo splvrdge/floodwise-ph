@@ -220,10 +220,8 @@ def main():
                     st.session_state.data_loaded = True
                     st.success("Dataset loaded successfully!")
                     st.rerun()
-                return False, None  # Success
             except Exception as e:
                 st.error(f"Error loading file: {str(e)}")
-                return False, str(e)
         
         # Clear chat history
         if st.button("Clear Chat History", use_container_width=True):
