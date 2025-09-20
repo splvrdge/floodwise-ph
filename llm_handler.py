@@ -92,8 +92,12 @@ class LLMHandler:
     
     def _classify_query_with_llm(self, query: str) -> QueryType:
         """Use the LLM to classify ambiguous queries."""
+        if not self.client:
+            logger.warning("OpenAI client not initialized")
+            return QueryType.UNKNOWN
+            
         try:
-            response = client.chat.completions.create(
+            response = self.client.chat.completions.create(
                 model=self.model,
                 messages=[
                     {"role": "system", "content": "You are a helpful assistant that classifies user queries. "
@@ -286,64 +290,51 @@ class LLMHandler:
                 return self._fallback_response(query, records)
     
     def _initialize_client(self):
-        """Initialize OpenAI client."""
+        """Initialize OpenAI client with multiple fallback strategies."""
         api_key = None
         
-        # Debug: Check what's available in secrets
-        try:
-            # Try to access secrets
-            if hasattr(st, 'secrets') and st.secrets:
-                # Check if OPENAI_API_KEY exists in secrets
-                if "OPENAI_API_KEY" in st.secrets:
-                    api_key = st.secrets["OPENAI_API_KEY"]
-                    # st.success("✅ API key found in Streamlit secrets")  # Commented out to hide message
-                else:
-                    # st.warning("⚠️ OPENAI_API_KEY not found in Streamlit secrets")  # Commented out
-                    # Show available keys for debugging
-                    available_keys = list(st.secrets.keys()) if st.secrets else []
-                    if available_keys:
-                        pass  # st.info(f"Available secret keys: {available_keys}")  # Commented out
-            else:
-                pass  # st.warning("⚠️ Streamlit secrets not available")  # Commented out
-        except Exception as e:
-            # Log error but continue with other initialization methods
-            logger.warning(f"Error accessing Streamlit secrets: {str(e)}")
-            if st.session_state.get('debug_mode', False):
-                st.warning("Debug: Could not access Streamlit secrets")
+        # Try to get API key from environment variables first
+        api_key = os.getenv("OPENAI_API_KEY")
         
-        # Fallback to environment variables if no API key found
+        # If not in environment, try Streamlit secrets
+        if not api_key and hasattr(st, 'secrets') and st.secrets:
+            try:
+                api_key = st.secrets.get("OPENAI_API_KEY")
+                # Show available keys for debugging
+                available_keys = list(st.secrets.keys()) if st.secrets else []
+                logger.debug(f"Available secret keys: {available_keys}")
+            except Exception as e:
+                logger.warning(f"Error accessing Streamlit secrets: {e}")
+        
+        # If still no API key, log a warning and return
         if not api_key:
-            api_key = os.getenv('OPENAI_API_KEY')
-            if api_key:
-                pass  # st.info("✅ API key found in environment variables")  # Commented out
-        
-        if api_key:
-            # Try multiple initialization strategies to handle httpx compatibility
-            strategies = [
-                ("Custom HTTP Client", self._init_with_custom_http_client),
-                ("Default Client", self._init_with_default_client),
-                ("Legacy Client", self._init_with_legacy_approach)
-            ]
-            
-            for strategy_name, strategy_func in strategies:
-                try:
-                    self.client = strategy_func(api_key)
-                    if self.client:
-                        # st.success(f"✅ OpenAI client initialized successfully using {strategy_name}")  # Commented out
-                        return
-                except Exception as e:
-                    # st.warning(f"❌ {strategy_name} failed: {str(e)}")  # Commented out
-                    continue
-            
-            # If all strategies fail
-            logger.warning("All OpenAI initialization strategies failed")
-            if st.session_state.get('debug_mode', False):
-                st.warning("Debug: All OpenAI initialization strategies failed. Running in basic mode.")
+            logger.warning("No OpenAI API key found. Some features may not work properly.")
             self.client = None
-        else:
-            logger.warning("No OpenAI API key found in secrets or environment")
-            if st.session_state.get('debug_mode', False):
-                st.warning("Debug: No OpenAI API key found. Running in basic mode.")
+            return
+        
+        # Try multiple initialization strategies to handle different environments
+        strategies = [
+            ("Default Client", self._init_with_default_client),
+            ("Custom HTTP Client", self._init_with_custom_http_client),
+            ("Legacy Client", self._init_with_legacy_approach)
+        ]
+        
+        for strategy_name, strategy_func in strategies:
+            try:
+                logger.info(f"Trying to initialize with {strategy_name}...")
+                strategy_func(api_key)
+                logger.info(f"Successfully initialized with {strategy_name}")
+                return
+            except Exception as e:
+                logger.warning(f"Failed to initialize with {strategy_name}: {e}")
+        
+        # If all initialization methods fail
+        logger.error("All OpenAI client initialization methods failed")
+        self.client = None
+        
+        # Log debug info if debug mode is enabled
+        if hasattr(st, 'session_state') and st.session_state.get('debug_mode', False):
+            st.warning("Debug: All OpenAI initialization strategies failed. Running in basic mode.")
     
     def _init_with_custom_http_client(self, api_key: str):
         """Initialize with custom HTTP client to avoid proxies issue."""
@@ -567,12 +558,15 @@ sufficient information to fully answer the question, please indicate what inform
         if records and records[0].get('query_type') == 'cost_summary':
             return self._format_cost_summary_response(query, records)
         
-        # Check if this is a location-specific cost query (e.g., "most expensive in Cebu")
         query_lower = query.lower()
+        
+        # Check for "most expensive" pattern
+        is_most_expensive_query = any(term in query_lower for term in ["most expensive", "highest cost", "largest budget"])
+        
+        # Extract location from query if present
         location_terms = ['in ', 'at ', 'for ', 'near ']
         location = None
         
-        # Extract location from query if present
         for term in location_terms:
             if term in query_lower:
                 # Get the text after the location term
@@ -580,29 +574,78 @@ sufficient information to fully answer the question, please indicate what inform
                 location = query[loc_start:].split('.')[0].split('?')[0].strip()
                 break
         
-        # Sort records by cost (highest first)
-        records = [r for r in records if r.get('ContractCost')]  # Filter out records without cost
-        records.sort(key=lambda x: float(x.get('ContractCost', 0)), reverse=True)
+        # Filter out records without cost and sort by cost (highest first)
+        valid_records = [r for r in records if r.get('ContractCost') and str(r.get('ContractCost', '')).strip().lower() not in ['', 'n/a', 'none']]
+        
+        if not valid_records:
+            if location:
+                return f"I couldn't find any projects with cost information in {location}."
+            return "I couldn't find any projects with cost information in the dataset."
+        
+        valid_records.sort(key=lambda x: float(str(x.get('ContractCost', '0')).replace(',', '')), reverse=True)
         
         # If location was specified, filter records for that location
         if location:
             location_records = []
-            for r in records:
+            for r in valid_records:
                 if (location.lower() in str(r.get('Municipality', '')).lower() or 
                     location.lower() in str(r.get('Province', '')).lower() or
-                    location.lower() in str(r.get('Region', '')).lower()):
+                    location.lower() in str(r.get('Region', '')).lower() or
+                    any(location.lower() in loc.lower() for loc in [r.get('Municipality', ''), r.get('Province', ''), r.get('Region', '') if r.get('Region') else ''])):
                     location_records.append(r)
             
             if location_records:
-                records = location_records
+                valid_records = location_records
                 intro = f"Here are the flood control projects in {location} sorted by budget (highest first):"
             else:
                 return f"I couldn't find any flood control projects in {location}. Would you like to try a different location?"
         else:
             intro = "Here are some flood control projects sorted by budget (highest first):"
         
+        # If it's a "most expensive" query, just return the top result
+        if is_most_expensive_query and valid_records:
+            record = valid_records[0]  # Already sorted by cost, highest first
+            cost = float(str(record.get('ContractCost', '0')).replace(',', ''))
+            
+            location_info = []
+            if record.get('Municipality'):
+                location_info.append(record['Municipality'])
+            if record.get('Province') and record['Province'].lower() not in [loc.lower() for loc in location_info]:
+                location_info.append(record['Province'])
+            
+            response = f"## 🏆 Most Expensive Project"
+            if location:
+                response += f" in {location}"
+            response += "\n\n"
+            
+            response += (
+                f"### {record.get('ProjectDescription', 'Flood Control Project')}\n"
+                f"📍 **Location:** {', '.join(location_info) or 'Not specified'}\n"
+                f"💰 **Budget:** ₱{cost:,.2f}\n"
+            )
+            
+            # Add contractor and status if available
+            if record.get('Contractor') and str(record['Contractor']).strip().lower() not in ['', 'n/a']:
+                response += f"🏗️ **Contractor:** {record['Contractor']}\n"
+            if record.get('Status') and str(record['Status']).strip().lower() not in ['', 'n/a']:
+                status = str(record['Status']).strip()
+                status_emoji = "✅" if 'complete' in status.lower() else "🔄"
+                response += f"{status_emoji} **Status:** {status}\n"
+            
+            # Add completion year if available
+            if (record.get('CompletionYear') and 
+                str(record['CompletionYear']).strip().lower() not in ['', 'n/a', 'none']):
+                response += f"📅 **Completed:** {record['CompletionYear']}\n"
+            
+            # Add a note if there are more projects
+            if len(valid_records) > 1:
+                response += f"\n*Note: There are {len(valid_records) - 1} other projects in this location.*"
+            
+            return response
+        
+        # For non-"most expensive" queries, return multiple results
         # Calculate statistics
-        costs = [float(r.get('ContractCost', 0)) for r in records if r.get('ContractCost')]
+        costs = [float(str(r.get('ContractCost', '0')).replace(',', '')) for r in valid_records]
         total_cost = sum(costs)
         avg_cost = total_cost / len(costs) if costs else 0
         
@@ -610,14 +653,14 @@ sufficient information to fully answer the question, please indicate what inform
         response = f"## 📊 {intro}\n\n"
         
         # Add summary statistics if we have multiple projects
-        if len(records) > 1:
-            response += (f"- **Total projects found:** {len(records)}\n"
+        if len(valid_records) > 1:
+            response += (f"- **Total projects found:** {len(valid_records)}\n"
                         f"- **Total investment:** ₱{total_cost:,.2f}\n"
                         f"- **Average project cost:** ₱{avg_cost:,.2f}\n\n")
         
         # Add project details
-        for i, record in enumerate(records[:5], 1):  # Limit to top 5 for brevity
-            cost = float(record.get('ContractCost', 0))
+        for i, record in enumerate(valid_records[:5], 1):  # Limit to top 5 for brevity
+            cost = float(str(record.get('ContractCost', '0')).replace(',', ''))
             location_info = []
             if record.get('Municipality'):
                 location_info.append(record['Municipality'])
@@ -631,21 +674,23 @@ sufficient information to fully answer the question, please indicate what inform
             )
             
             # Add contractor and status if available
-            if record.get('Contractor') and str(record['Contractor']).lower() != 'n/a':
+            if record.get('Contractor') and str(record['Contractor']).strip().lower() not in ['', 'n/a']:
                 response += f"🏗️ **Contractor:** {record['Contractor']}\n"
-            if record.get('Status') and str(record['Status']).lower() != 'n/a':
-                status_emoji = "✅" if 'complete' in str(record['Status']).lower() else "🔄"
-                response += f"{status_emoji} **Status:** {record['Status']}\n"
+            if record.get('Status') and str(record['Status']).strip().lower() not in ['', 'n/a']:
+                status = str(record['Status']).strip()
+                status_emoji = "✅" if 'complete' in status.lower() else "🔄"
+                response += f"{status_emoji} **Status:** {status}\n"
             
             # Add completion year if available
-            if record.get('CompletionYear') and str(record['CompletionYear']).strip() and str(record['CompletionYear']).lower() != 'n/a':
+            if (record.get('CompletionYear') and 
+                str(record['CompletionYear']).strip().lower() not in ['', 'n/a', 'none']):
                 response += f"📅 **Completed:** {record['CompletionYear']}\n"
             
             response += "\n"  # Add spacing between projects
         
         # Add a note about additional results
-        if len(records) > 5:
-            response += f"*Note: Showing top 5 projects out of {len(records)}. "
+        if len(valid_records) > 5:
+            response += f"*Note: Showing top 5 projects out of {len(valid_records)}. "
             response += "You can ask for more specific details about any project.*"
         
         return response
@@ -1282,13 +1327,108 @@ sufficient information to fully answer the question, please indicate what inform
         
         return response
     
+    def _extract_infrastructure_types(self, description: str) -> List[str]:
+        """Extract infrastructure types from project descriptions."""
+        if not description:
+            return []
+            
+        # Common infrastructure types to look for
+        infrastructure_terms = [
+            'drainage', 'flood wall', 'seawall', 'dike', 'levee', 'floodgate', 
+            'pump station', 'retention basin', 'detention pond', 'channel',
+            'culvert', 'bridge', 'embankment', 'floodway', 'spillway', 'canal',
+            'tunnel', 'flood control', 'river control', 'shore protection'
+        ]
+        
+        # Find matching infrastructure types in the description
+        found_types = []
+        description_lower = description.lower()
+        
+        for term in infrastructure_terms:
+            if term in description_lower:
+                # Add the properly capitalized version
+                found_types.append(term.title())
+                
+        return found_types
+        
     def _format_analysis_response(self, query: str, records: List[Dict[str, Any]]) -> str:
         """Generate a natural language response for analysis and insights queries."""
         if not records:
             return "I couldn't find any analysis results for your query. Could you try rephrasing or asking about something else?"
         
-        # Check if this is a region count query
         query_lower = query.lower()
+        
+        # Check if this is an infrastructure type query
+        infra_terms = ['type of infrastructure', 'infrastructure type', 'kind of project', 'what kind of', 'what types of']
+        is_infra_query = any(term in query_lower for term in infra_terms)
+        
+        # Extract location if specified
+        location = None
+        location_terms = ['in ', 'at ', 'for ', 'near ']
+        for term in location_terms:
+            if term in query_lower:
+                loc_start = query_lower.find(term) + len(term)
+                location = query[loc_start:].split('.')[0].split('?')[0].strip()
+                break
+        
+        # Handle infrastructure type queries
+        if is_infra_query:
+            # Filter by location if specified
+            if location:
+                filtered_records = []
+                for r in records:
+                    if (location.lower() in str(r.get('Municipality', '')).lower() or 
+                        location.lower() in str(r.get('Province', '')).lower() or
+                        location.lower() in str(r.get('Region', '')).lower()):
+                        filtered_records.append(r)
+                records = filtered_records
+                
+                if not records:
+                    return f"I couldn't find any flood control projects in {location} to analyze infrastructure types."
+            
+            # Extract and count infrastructure types
+            type_counts = {}
+            total_projects = 0
+            
+            for record in records:
+                desc = record.get('ProjectDescription', '')
+                if not desc:
+                    continue
+                    
+                types_in_project = self._extract_infrastructure_types(desc)
+                if not types_in_project:
+                    types_in_project = ['Other Flood Control']
+                    
+                for infra_type in types_in_project:
+                    type_counts[infra_type] = type_counts.get(infra_type, 0) + 1
+                    total_projects += 1
+            
+            if not type_counts:
+                return "I couldn't determine the types of infrastructure from the available project data."
+            
+            # Sort by frequency
+            sorted_types = sorted(type_counts.items(), key=lambda x: x[1], reverse=True)
+            
+            # Build response
+            location_phrase = f" in {location}" if location else ""
+            response = f"## 🏗️ Types of Flood Control Infrastructure{location_phrase}\n\n"
+            
+            if total_projects > 0:
+                response += f"Based on {total_projects} analyzed projects{location_phrase.lower() if location else ''}, "
+                response += "here are the most common types of flood control infrastructure:\n\n"
+                
+                for i, (infra_type, count) in enumerate(sorted_types[:10], 1):  # Limit to top 10
+                    percentage = (count / total_projects) * 100
+                    response += f"{i}. **{infra_type}**: {count} projects ({percentage:.1f}%)\n"
+                
+                if len(sorted_types) > 10:
+                    response += f"\n*And {len(sorted_types) - 10} other types of infrastructure.*"
+                
+                response += "\n\n*Note: This analysis is based on project descriptions and may not capture all infrastructure types.*"
+                
+                return response
+        
+        # Check if this is a region count query
         is_region_query = any(term in query_lower for term in ["region", "regions", "which region"])
         is_count_query = any(term in query_lower for term in ["count", "number", "how many", "most"])
         
@@ -1520,7 +1660,17 @@ I couldn't find any flood control projects matching your query: "{query}"
     
     def is_available(self) -> bool:
         """Check if LLM service is available."""
-        return self.client is not None
+        if not self.client:
+            logger.warning("OpenAI client is not initialized")
+            return False
+            
+        try:
+            # Test the client with a simple request
+            self.client.models.list()
+            return True
+        except Exception as e:
+            logger.error(f"OpenAI client test failed: {e}")
+            return False
     
     def get_model_info(self) -> Dict[str, str]:
         """Get information about the current model."""
