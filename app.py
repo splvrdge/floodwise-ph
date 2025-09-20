@@ -67,19 +67,27 @@ def sidebar():
         # Initialize data handler if not exists
         if 'data_handler' not in st.session_state:
             st.session_state.data_handler = FloodControlDataHandler()
+        
+        # Initialize data_loaded if not exists
+        if 'data_loaded' not in st.session_state:
+            st.session_state.data_loaded = False
             
-        if st.session_state.data_loaded and hasattr(st.session_state.data_handler, 'df') and st.session_state.data_handler.df is not None:
+        if st.session_state.data_loaded:
             try:
-                stats = st.session_state.data_handler.get_summary_stats()
-                st.markdown(
-                    f"<div class='status success'>✅ Loaded {stats.get('total_records', 0):,} records<br>"
-                    f"📋 {len(stats.get('columns', []))} columns<br>"
-                    f"🌏 {stats.get('unique_regions', 0)} regions<br>"
-                    f"📅 {stats.get('date_range', 'N/A')}</div>",
-                    unsafe_allow_html=True,
-                )
+                # Verify data_handler has data before calling get_summary_stats
+                if hasattr(st.session_state.data_handler, 'df') and st.session_state.data_handler.df is not None:
+                    stats = st.session_state.data_handler.get_summary_stats()
+                    st.markdown(
+                        f"<div class='status success'>✅ Loaded {stats.get('total_records', 0):,} records<br>"
+                        f"📋 {len(stats.get('columns', []))} columns<br>"
+                        f"🌏 {stats.get('unique_regions', 0)} regions<br>"
+                        f"📅 {stats.get('date_range', 'N/A')}</div>",
+                        unsafe_allow_html=True,
+                    )
+                else:
+                    st.markdown("<div class='status warn'>⚠️ No data available</div>", unsafe_allow_html=True)
             except Exception as e:
-                st.markdown(f"<div class='status warn'>⚠️ Error loading stats: {str(e)[:100]}</div>", unsafe_allow_html=True)
+                st.markdown(f"<div class='status error'>❌ Error: {str(e)[:100]}</div>", unsafe_allow_html=True)
         else:
             st.markdown("<div class='status warn'>⚠️ Dataset not loaded</div>", unsafe_allow_html=True)
             uploaded = st.file_uploader("Upload CSV", type=['csv'])
@@ -90,6 +98,7 @@ def sidebar():
                         st.rerun()
                 except Exception as e:
                     st.error(f"Error loading file: {str(e)}")
+                    st.session_state.data_loaded = False
 
         st.markdown("### 🤖 AI")
         try:
