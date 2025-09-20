@@ -49,7 +49,7 @@ class LLMHandler:
     
     def detect_query_type(self, query: str) -> QueryType:
         """
-        Determine the type of the user query.
+        Determine the type of the user query using a hybrid approach.
         
         Args:
             query: The user's input query
@@ -60,16 +60,29 @@ class LLMHandler:
         if not query or not query.strip():
             return QueryType.GENERAL_CONVERSATION
             
-        query_lower = query.lower()
+        query_lower = query.lower().strip()
         
-        # Check for general conversation
-        if any(phrase in query_lower for phrase in self.GENERAL_PHRASES):
+        # First check for general conversation patterns
+        if any(phrase in query_lower.split() for phrase in ["hi", "hello", "hey", "greetings"]):
+            return QueryType.GENERAL_CONVERSATION
+            
+        # Check for how are you and similar greetings
+        if any(phrase in query_lower for phrase in ["how are you", "what's up", "how's it going"]):
+            return QueryType.GENERAL_CONVERSATION
+            
+        # Check for thanks/bye patterns
+        if any(phrase in query_lower for phrase in ["thank", "thanks", "bye", "goodbye"]):
             return QueryType.GENERAL_CONVERSATION
             
         # Check for flood control related queries
-        if any(keyword in query_lower for keyword in self.FLOOD_KEYWORDS):
+        flood_terms = ["flood", "drainage", "project", "contract", "contractor", 
+                      "location", "region", "province", "municipality", "cost",
+                      "budget", "construction", "mitigation"]
+                      
+        if any(term in query_lower for term in flood_terms):
             # Check if it's a data analysis query
-            analysis_terms = ["analyze", "analysis", "trend", "statistic", "compare", "summary"]
+            analysis_terms = ["analyze", "analysis", "trend", "statistic", 
+                            "compare", "summary", "overview", "insight"]
             if any(term in query_lower for term in analysis_terms):
                 return QueryType.DATA_ANALYSIS
             return QueryType.FLOOD_CONTROL_QUERY
@@ -104,27 +117,53 @@ class LLMHandler:
             return QueryType.UNKNOWN
     
     def handle_general_conversation(self, query: str) -> str:
-        """Handle general conversation queries."""
+        """Handle general conversation queries with natural responses."""
+        query_lower = query.lower().strip()
+        
+        # Handle common greetings and small talk
+        if any(phrase in query_lower for phrase in ["hi", "hello", "hey", "greetings"]):
+            return "Hello! I'm here to help you explore flood control projects in the Philippines. What would you like to know?"
+            
+        if any(phrase in query_lower for phrase in ["how are you", "how's it going"]):
+            return "I'm doing well, thank you for asking! I'm ready to help you find information about flood control projects. What would you like to know?"
+            
+        if any(phrase in query_lower for phrase in ["thank", "thanks"]):
+            return "You're welcome! Is there anything else you'd like to know about flood control projects?"
+            
+        if any(phrase in query_lower for phrase in ["bye", "goodbye"]):
+            return "Goodbye! Feel free to come back if you have more questions about flood control projects."
+            
+        if any(phrase in query_lower for phrase in ["help", "what can you do"]):
+            return ("I can help you find information about flood control projects across the Philippines. "
+                   "You can ask me about projects by location, cost, contractor, or completion status. "
+                   "For example, you could ask 'Show me flood control projects in Cebu' or 'What are the most expensive projects?'")
+        
+        # For other general queries, use the LLM with a focused prompt
         try:
-            response = client.chat.completions.create(
+            response = self.client.chat.completions.create(
                 model=self.model,
                 messages=[
-                    {"role": "system", "content": "You are a helpful assistant for the Flood Control Projects Database. "
-                                                "Be friendly, concise, and professional. If asked about your capabilities, "
-                                                "mention you can help with queries about flood control projects, "
-                                                "including costs, locations, contractors, and analysis."},
+                    {
+                        "role": "system", 
+                        "content": "You are a helpful assistant for the Flood Control Projects Database. "
+                                 "Respond naturally and conversationally. If the query is related to flood control "
+                                 "projects in the Philippines, say you can help with that. Otherwise, keep it brief. "
+                                 "Be friendly and professional."
+                    },
                     {"role": "user", "content": query}
                 ],
-                temperature=0.7
+                temperature=0.7,
+                max_tokens=150
             )
             return response.choices[0].message.content
+            
         except Exception as e:
             logger.error(f"Error in general conversation: {e}")
-            return "I'm sorry, I encountered an error processing your message. How can I assist you with flood control projects?"
+            return "I'm sorry, I'm having trouble processing that right now. Could you try asking about flood control projects in the Philippines?"
     
     def generate_response(self, query: str, records: List[Dict[str, Any]] = None, context: Dict[str, Any] = None) -> str:
         """
-        Generate a response based on the user's query and available records.
+        Generate a response based on the user's query and available records using a hybrid approach.
         
         Args:
             query: The user's input query
@@ -132,10 +171,10 @@ class LLMHandler:
             context: Additional context for the response
             
         Returns:
-            str: The generated response
+            str: The generated response in natural language
         """
         if not query or not query.strip():
-            return "Please enter a valid query."
+            return "I didn't catch that. Could you please rephrase your question?"
         
         # Initialize records if not provided
         if records is None:
@@ -152,8 +191,9 @@ class LLMHandler:
         # Handle unknown query types
         if query_type == QueryType.UNKNOWN:
             return ("I'm not sure if this is related to flood control projects. "
-                   "I can help with questions about flood control projects, including "
-                   "costs, locations, contractors, and analysis. Could you rephrase your question?")
+                   "I can help you find information about flood control projects in the Philippines, "
+                   "including details about costs, locations, contractors, and project status. "
+                   "Could you rephrase your question?")
         
         # For flood control queries, check if we have records
         if not records and query_type != QueryType.GENERAL_CONVERSATION:
@@ -163,26 +203,68 @@ class LLMHandler:
         if context is None:
             context = {}
         
-        # Handle flood control specific queries
+        # Use LLM to generate a natural response based on the data
         try:
-            # Determine the appropriate response type based on the query and records
-            response_type = self._determine_response_type(query, records)
-            logger.info(f"Determined response type: {response_type}")
+            # Format the records into a more natural, readable string
+            records_str = "\n".join([
+                f"- {record.get('ProjectDescription', 'A flood control project')} "
+                f"in {record.get('Municipality', 'an unspecified location')}, "
+                f"{record.get('Province', 'an unspecified province')} "
+                f"(Cost: ₱{float(record.get('ContractCost', 0)):,.2f}, "
+                f"Contractor: {record.get('Contractor', 'Not specified')}, "
+                f"Status: {record.get('Status', 'Unknown')})"
+                for record in records[:5]  # Limit to first 5 records
+            ])
             
-            # Generate the appropriate response
-            if response_type == "cost":
-                return self._format_cost_response(query, records)
-            elif response_type == "contractor":
-                return self._format_contractor_response(query, records)
-            elif response_type == "location":
-                return self._format_standard_location_response(query, records)
-            elif response_type == "comparison":
-                return self._format_comparison_response(query, records)
-            elif response_type == "analysis" or query_type == QueryType.DATA_ANALYSIS:
-                return self._format_analysis_response(query, records)
-            else:
-                # Fall back to general response format
-                return self._format_general_response(query, records)
+            # Generate a natural language response using the LLM
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": (
+                            "You are a helpful assistant that provides information about flood control projects in the Philippines. "
+                            "Use the provided project data to answer the user's question in a clear, natural way. "
+                            "Be concise but informative. If the data doesn't contain the exact information requested, "
+                            "say so and provide what information is available. Format numbers clearly (e.g., ₱1,234,567.89)."
+                        )
+                    },
+                    {
+                        "role": "user",
+                        "content": (
+                            f"Question: {query}\n\n"
+                            f"Here are some relevant projects from our database:\n{records_str}\n\n"
+                            "Please provide a helpful, natural response based on this information. "
+                            "If the question asks for specific details not in the data, explain what information is available. "
+                            "Use markdown for formatting if helpful, but keep it simple."
+                        )
+                    }
+                ],
+                temperature=0.3,
+                max_tokens=500,
+                top_p=0.9,
+                frequency_penalty=0.5,
+                presence_penalty=0.5
+            )
+            
+            return response.choices[0].message.content.strip()
+            
+        except Exception as e:
+            logger.error(f"Error generating response: {e}")
+            # Fall back to structured response if LLM fails
+            try:
+                response_type = self._determine_response_type(query, records)
+                if response_type == "cost":
+                    return self._format_cost_response(query, records)
+                elif response_type == "contractor":
+                    return self._format_contractor_response(query, records)
+                elif response_type == "location":
+                    return self._format_standard_location_response(query, records)
+                else:
+                    return self._format_general_response(query, records)
+            except Exception as inner_e:
+                logger.error(f"Fallback response generation failed: {inner_e}")
+                return "I'm having trouble processing your request right now. Please try again later or rephrase your question."
                 
         except Exception as e:
             logger.error(f"Error generating response: {e}", exc_info=True)
