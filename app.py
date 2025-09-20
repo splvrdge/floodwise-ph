@@ -63,28 +63,42 @@ if not st.session_state.data_loaded:
 def sidebar():
     with st.sidebar:
         st.markdown("### 📊 Dataset")
-        if st.session_state.data_loaded:
-            stats = st.session_state.data_handler.get_summary_stats()
-            st.markdown(
-                f"<div class='status success'>✅ Loaded {stats['total_records']:,} records<br>"
-                f"📋 {len(stats['columns'])} columns<br>"
-                f"🌏 {stats['unique_regions']} regions<br>"
-                f"📅 {stats['date_range']}</div>",
-                unsafe_allow_html=True,
-            )
+        
+        # Initialize data handler if not exists
+        if 'data_handler' not in st.session_state:
+            st.session_state.data_handler = FloodControlDataHandler()
+            
+        if st.session_state.data_loaded and hasattr(st.session_state.data_handler, 'df') and st.session_state.data_handler.df is not None:
+            try:
+                stats = st.session_state.data_handler.get_summary_stats()
+                st.markdown(
+                    f"<div class='status success'>✅ Loaded {stats.get('total_records', 0):,} records<br>"
+                    f"📋 {len(stats.get('columns', []))} columns<br>"
+                    f"🌏 {stats.get('unique_regions', 0)} regions<br>"
+                    f"📅 {stats.get('date_range', 'N/A')}</div>",
+                    unsafe_allow_html=True,
+                )
+            except Exception as e:
+                st.markdown(f"<div class='status warn'>⚠️ Error loading stats: {str(e)[:100]}</div>", unsafe_allow_html=True)
         else:
             st.markdown("<div class='status warn'>⚠️ Dataset not loaded</div>", unsafe_allow_html=True)
             uploaded = st.file_uploader("Upload CSV", type=['csv'])
             if uploaded and st.button("Load"):
-                if st.session_state.data_handler.load_csv(uploaded):
-                    st.session_state.data_loaded = True
-                    st.rerun()
+                try:
+                    if st.session_state.data_handler.load_csv(uploaded):
+                        st.session_state.data_loaded = True
+                        st.rerun()
+                except Exception as e:
+                    st.error(f"Error loading file: {str(e)}")
 
         st.markdown("### 🤖 AI")
-        if st.session_state.llm_handler.is_available():
-            st.markdown("<div class='status success'>✅ AI Model Ready</div>", unsafe_allow_html=True)
-        else:
-            st.markdown("<div class='status warn'>⚠️ Basic mode (no AI)</div>", unsafe_allow_html=True)
+        try:
+            if st.session_state.llm_handler.is_available():
+                st.markdown("<div class='status success'>✅ AI Model Ready</div>", unsafe_allow_html=True)
+            else:
+                st.markdown("<div class='status warn'>⚠️ Basic mode (no AI)</div>", unsafe_allow_html=True)
+        except Exception as e:
+            st.markdown("<div class='status error'>❌ AI Service Unavailable</div>", unsafe_allow_html=True)
 
 def chat_ui():
     st.subheader("💬 Ask About Flood Control Projects")
@@ -121,16 +135,38 @@ def footer():
 
 # Main
 def main():
+    # Initialize session state variables if they don't exist
+    if 'data_handler' not in st.session_state:
+        st.session_state.data_handler = FloodControlDataHandler()
+    if 'data_loaded' not in st.session_state:
+        st.session_state.data_loaded = False
+    if 'chat_history' not in st.session_state:
+        st.session_state.chat_history = []
+    if 'llm_handler' not in st.session_state:
+        st.session_state.llm_handler = LLMHandler()
+
     st.markdown("<h1 style='text-align:center'>🌊 FloodWise PH</h1>", unsafe_allow_html=True)
     st.markdown("<p style='text-align:center;color:var(--text-light)'>Philippines Flood Control Intelligence</p>", unsafe_allow_html=True)
 
-    sidebar()
-    if st.session_state.data_loaded:
-        chat_ui()
-    else:
-        st.error("❌ Dataset could not be loaded. Please upload manually.")
-
-    footer()
+    try:
+        sidebar()
+        
+        if st.session_state.data_loaded:
+            try:
+                chat_ui()
+            except Exception as e:
+                st.error(f"Error in chat interface: {str(e)}")
+        else:
+            st.error("❌ Dataset could not be loaded. Please upload manually via the sidebar.")
+            
+        footer()
+        
+    except Exception as e:
+        st.error(f"An unexpected error occurred: {str(e)}")
+        st.button("Reload App")
+        if st.button("Clear Session"):
+            st.session_state.clear()
+            st.rerun()
 
 if __name__ == "__main__":
     main()
