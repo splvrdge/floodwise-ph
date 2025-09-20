@@ -27,23 +27,23 @@ class LLMHandler:
                 # Check if OPENAI_API_KEY exists in secrets
                 if "OPENAI_API_KEY" in st.secrets:
                     api_key = st.secrets["OPENAI_API_KEY"]
-                    st.success("✅ API key found in Streamlit secrets")
+                    # st.success("✅ API key found in Streamlit secrets")  # Commented out to hide message
                 else:
-                    st.warning("⚠️ OPENAI_API_KEY not found in Streamlit secrets")
+                    # st.warning("⚠️ OPENAI_API_KEY not found in Streamlit secrets")  # Commented out
                     # Show available keys for debugging
                     available_keys = list(st.secrets.keys()) if st.secrets else []
                     if available_keys:
-                        st.info(f"Available secret keys: {available_keys}")
+                        pass  # st.info(f"Available secret keys: {available_keys}")  # Commented out
             else:
-                st.warning("⚠️ Streamlit secrets not available")
+                pass  # st.warning("⚠️ Streamlit secrets not available")  # Commented out
         except Exception as e:
-            st.error(f"Error accessing Streamlit secrets: {str(e)}")
+            pass  # st.error(f"Error accessing Streamlit secrets: {str(e)}")  # Commented out
         
         # Fallback to environment variables if no API key found
         if not api_key:
             api_key = os.getenv('OPENAI_API_KEY')
             if api_key:
-                st.info("✅ API key found in environment variables")
+                pass  # st.info("✅ API key found in environment variables")  # Commented out
         
         if api_key:
             # Try multiple initialization strategies to handle httpx compatibility
@@ -57,18 +57,18 @@ class LLMHandler:
                 try:
                     self.client = strategy_func(api_key)
                     if self.client:
-                        st.success(f"✅ OpenAI client initialized successfully using {strategy_name}")
+                        # st.success(f"✅ OpenAI client initialized successfully using {strategy_name}")  # Commented out
                         return
                 except Exception as e:
-                    st.warning(f"❌ {strategy_name} failed: {str(e)}")
+                    # st.warning(f"❌ {strategy_name} failed: {str(e)}")  # Commented out
                     continue
             
             # If all strategies fail
-            st.error("⚠️ All OpenAI initialization strategies failed")
-            st.info("The app will continue with basic functionality (no AI responses)")
+            # st.error("⚠️ All OpenAI initialization strategies failed")  # Commented out
+            # st.info("The app will continue with basic functionality (no AI responses)")  # Commented out
             self.client = None
         else:
-            st.error("⚠️ No OpenAI API key found in secrets or environment")
+            pass  # st.error("⚠️ No OpenAI API key found in secrets or environment")  # Commented out
     
     def _init_with_custom_http_client(self, api_key: str):
         """Initialize with custom HTTP client to avoid proxies issue."""
@@ -189,27 +189,237 @@ sufficient information to fully answer the question, please indicate what inform
         return "\n".join(context_parts)
     
     def _fallback_response(self, query: str, relevant_records: List[Dict[str, Any]]) -> str:
-        """Generate a fallback response when LLM is not available."""
+        """Generate a comprehensive fallback response when LLM is not available."""
         if not relevant_records:
-            return """I couldn't find any relevant flood control project records for your query. 
-            Please try rephrasing your question or check if the CSV data contains the information you're looking for."""
+            return self._generate_no_results_response(query)
         
-        # Create a simple response based on available data
+        # Analyze query type for better response formatting
+        query_type = self._analyze_query_intent(query.lower())
+        
+        if query_type == 'cost_analysis':
+            return self._format_cost_response(query, relevant_records)
+        elif query_type == 'contractor_analysis':
+            return self._format_contractor_response(query, relevant_records)
+        elif query_type == 'completion_analysis':
+            return self._format_completion_response(query, relevant_records)
+        elif query_type == 'project_type_analysis':
+            return self._format_project_type_response(query, relevant_records)
+        elif query_type == 'location_analysis':
+            return self._format_location_response(query, relevant_records)
+        else:
+            return self._format_general_response(query, relevant_records)
+    
+    def _analyze_query_intent(self, query: str) -> str:
+        """Analyze query to determine the best response format."""
+        if any(term in query for term in ['expensive', 'cost', 'budget', 'price', 'amount']):
+            return 'cost_analysis'
+        elif any(term in query for term in ['contractor', 'company', 'builder', 'who built']):
+            return 'contractor_analysis'
+        elif any(term in query for term in ['completed', 'finished', 'when', 'completion']):
+            return 'completion_analysis'
+        elif any(term in query for term in ['type', 'drainage', 'bridge', 'seawall', 'revetment']):
+            return 'project_type_analysis'
+        elif any(term in query for term in ['where', 'location', 'region', 'province', 'city']):
+            return 'location_analysis'
+        else:
+            return 'general'
+    
+    def _format_cost_response(self, query: str, records: List[Dict[str, Any]]) -> str:
+        """Format response for cost-related queries."""
+        response_parts = []
+        
+        if 'expensive' in query.lower():
+            response_parts.append("## 💰 Most Expensive Flood Control Projects")
+        elif 'cheapest' in query.lower():
+            response_parts.append("## 💰 Most Affordable Flood Control Projects")
+        else:
+            response_parts.append("## 💰 Flood Control Projects by Cost")
+        
+        response_parts.append("")
+        
+        # Calculate total cost
+        total_cost = sum(float(r.get('ContractCost', 0)) for r in records if r.get('ContractCost'))
+        if total_cost > 0:
+            response_parts.append(f"**Total Combined Cost:** ₱{total_cost:,.2f}")
+            response_parts.append("")
+        
+        for i, record in enumerate(records[:5], 1):
+            cost = record.get('ContractCost')
+            abc = record.get('ABC')
+            
+            response_parts.append(f"### {i}. {record.get('ProjectDescription', 'Unknown Project')}")
+            response_parts.append(f"📍 **Location:** {record.get('Municipality', 'N/A')}, {record.get('Province', 'N/A')}")
+            
+            if cost:
+                response_parts.append(f"💰 **Contract Cost:** ₱{float(cost):,.2f}")
+            if abc and abc != cost:
+                response_parts.append(f"📋 **Approved Budget:** ₱{float(abc):,.2f}")
+                if cost and abc:
+                    savings = float(abc) - float(cost)
+                    if savings > 0:
+                        response_parts.append(f"💡 **Savings:** ₱{savings:,.2f}")
+            
+            response_parts.append(f"🏗️ **Contractor:** {record.get('Contractor', 'N/A')}")
+            response_parts.append(f"📅 **Completion:** {record.get('CompletionYear', 'N/A')}")
+            response_parts.append("")
+        
+        return "\n".join(response_parts)
+    
+    def _format_contractor_response(self, query: str, records: List[Dict[str, Any]]) -> str:
+        """Format response for contractor-related queries."""
+        response_parts = ["## 🏗️ Contractor Information", ""]
+        
+        # Check if we have contractor project counts
+        if records and 'contractor_project_count' in records[0]:
+            response_parts.append("### Top Contractors by Project Count")
+            response_parts.append("")
+            
+            for i, record in enumerate(records[:5], 1):
+                contractor = record.get('Contractor', 'Unknown')
+                count = record.get('contractor_project_count', 0)
+                cost = record.get('ContractCost', 0)
+                
+                response_parts.append(f"**{i}. {contractor}**")
+                response_parts.append(f"📊 **Total Projects:** {count}")
+                response_parts.append(f"💰 **Sample Project Cost:** ₱{float(cost):,.2f}")
+                response_parts.append(f"📍 **Location:** {record.get('Municipality', 'N/A')}, {record.get('Province', 'N/A')}")
+                response_parts.append(f"🏗️ **Project:** {record.get('ProjectDescription', 'N/A')}")
+                response_parts.append("")
+        else:
+            # Regular contractor search results
+            for i, record in enumerate(records[:5], 1):
+                response_parts.append(f"### {i}. {record.get('Contractor', 'Unknown Contractor')}")
+                response_parts.append(f"🏗️ **Project:** {record.get('ProjectDescription', 'N/A')}")
+                response_parts.append(f"📍 **Location:** {record.get('Municipality', 'N/A')}, {record.get('Province', 'N/A')}")
+                response_parts.append(f"💰 **Cost:** ₱{float(record.get('ContractCost', 0)):,.2f}")
+                response_parts.append(f"📅 **Completion:** {record.get('CompletionYear', 'N/A')}")
+                response_parts.append("")
+        
+        return "\n".join(response_parts)
+    
+    def _format_completion_response(self, query: str, records: List[Dict[str, Any]]) -> str:
+        """Format response for completion-related queries."""
+        response_parts = ["## 📅 Project Completion Information", ""]
+        
+        # Group by year if multiple years present
+        years = set(str(r.get('CompletionYear', 'N/A')) for r in records)
+        if len(years) > 1:
+            response_parts.append(f"**Years Covered:** {', '.join(sorted(years))}")
+            response_parts.append("")
+        
+        for i, record in enumerate(records[:5], 1):
+            completion_year = record.get('CompletionYear', 'N/A')
+            completion_date = record.get('CompletionDateActual', 'N/A')
+            start_date = record.get('StartDate', 'N/A')
+            
+            response_parts.append(f"### {i}. {record.get('ProjectDescription', 'Unknown Project')}")
+            response_parts.append(f"📍 **Location:** {record.get('Municipality', 'N/A')}, {record.get('Province', 'N/A')}")
+            response_parts.append(f"📅 **Completion Year:** {completion_year}")
+            
+            if completion_date != 'N/A':
+                response_parts.append(f"🗓️ **Completion Date:** {completion_date}")
+            if start_date != 'N/A':
+                response_parts.append(f"🚀 **Start Date:** {start_date}")
+            
+            response_parts.append(f"💰 **Cost:** ₱{float(record.get('ContractCost', 0)):,.2f}")
+            response_parts.append(f"🏗️ **Contractor:** {record.get('Contractor', 'N/A')}")
+            response_parts.append("")
+        
+        return "\n".join(response_parts)
+    
+    def _format_project_type_response(self, query: str, records: List[Dict[str, Any]]) -> str:
+        """Format response for project type queries."""
+        response_parts = ["## 🔧 Project Type Analysis", ""]
+        
+        # Get unique project types
+        project_types = set(r.get('TypeofWork', 'N/A') for r in records)
+        if len(project_types) > 1:
+            response_parts.append(f"**Project Types Found:** {', '.join(project_types)}")
+            response_parts.append("")
+        
+        for i, record in enumerate(records[:5], 1):
+            response_parts.append(f"### {i}. {record.get('ProjectDescription', 'Unknown Project')}")
+            response_parts.append(f"🔧 **Type of Work:** {record.get('TypeofWork', 'N/A')}")
+            response_parts.append(f"🏗️ **Infrastructure Type:** {record.get('infra_type', 'N/A')}")
+            response_parts.append(f"📍 **Location:** {record.get('Municipality', 'N/A')}, {record.get('Province', 'N/A')}")
+            response_parts.append(f"💰 **Cost:** ₱{float(record.get('ContractCost', 0)):,.2f}")
+            response_parts.append(f"🏗️ **Contractor:** {record.get('Contractor', 'N/A')}")
+            response_parts.append(f"📅 **Completion:** {record.get('CompletionYear', 'N/A')}")
+            response_parts.append("")
+        
+        return "\n".join(response_parts)
+    
+    def _format_location_response(self, query: str, records: List[Dict[str, Any]]) -> str:
+        """Format response for location-based queries."""
+        response_parts = ["## 📍 Location-Based Project Analysis", ""]
+        
+        # Get unique locations
+        locations = set(f"{r.get('Municipality', 'N/A')}, {r.get('Province', 'N/A')}" for r in records)
+        if len(locations) > 1:
+            response_parts.append(f"**Locations Covered:** {len(locations)} municipalities/cities")
+            response_parts.append("")
+        
+        # Calculate total investment in the area
+        total_cost = sum(float(r.get('ContractCost', 0)) for r in records if r.get('ContractCost'))
+        if total_cost > 0:
+            response_parts.append(f"💰 **Total Investment:** ₱{total_cost:,.2f}")
+            response_parts.append("")
+        
+        for i, record in enumerate(records[:5], 1):
+            response_parts.append(f"### {i}. {record.get('ProjectDescription', 'Unknown Project')}")
+            response_parts.append(f"📍 **Location:** {record.get('Municipality', 'N/A')}, {record.get('Province', 'N/A')}")
+            response_parts.append(f"🌏 **Region:** {record.get('Region', 'N/A')}")
+            response_parts.append(f"🔧 **Type:** {record.get('TypeofWork', 'N/A')}")
+            response_parts.append(f"💰 **Cost:** ₱{float(record.get('ContractCost', 0)):,.2f}")
+            response_parts.append(f"🏗️ **Contractor:** {record.get('Contractor', 'N/A')}")
+            response_parts.append(f"📅 **Completion:** {record.get('CompletionYear', 'N/A')}")
+            response_parts.append("")
+        
+        return "\n".join(response_parts)
+    
+    def _format_general_response(self, query: str, records: List[Dict[str, Any]]) -> str:
+        """Format general response for other queries."""
         response_parts = [
-            f"Based on the available flood control project data, I found {len(relevant_records)} relevant record(s):",
+            f"## 🔍 Search Results ({len(records)} projects found)",
             ""
         ]
         
-        for i, record in enumerate(relevant_records[:3], 1):
-            response_parts.append(f"Project {i}:")
-            for key, value in record.items():
-                if key != 'similarity_score' and value is not None and str(value).strip():
-                    response_parts.append(f"  • {key}: {value}")
+        for i, record in enumerate(records[:5], 1):
+            response_parts.append(f"### {i}. {record.get('ProjectDescription', 'Unknown Project')}")
+            response_parts.append(f"📍 **Location:** {record.get('Municipality', 'N/A')}, {record.get('Province', 'N/A')}")
+            response_parts.append(f"🔧 **Type:** {record.get('TypeofWork', 'N/A')}")
+            response_parts.append(f"💰 **Cost:** ₱{float(record.get('ContractCost', 0)):,.2f}")
+            response_parts.append(f"🏗️ **Contractor:** {record.get('Contractor', 'N/A')}")
+            response_parts.append(f"📅 **Completion:** {record.get('CompletionYear', 'N/A')}")
             response_parts.append("")
         
-        response_parts.append("Note: This is a basic response. For more detailed analysis, please configure an OpenAI API key.")
+        if len(records) > 5:
+            response_parts.append(f"*Showing top 5 results out of {len(records)} found.*")
+            response_parts.append("")
         
         return "\n".join(response_parts)
+    
+    def _generate_no_results_response(self, query: str) -> str:
+        """Generate helpful response when no results are found."""
+        return f"""## ❌ No Results Found
+
+I couldn't find any flood control projects matching your query: **"{query}"**
+
+### 💡 Try These Suggestions:
+- **Check spelling** of location names (e.g., "Cebu City", "Manila", "Davao")
+- **Use broader terms** (e.g., "drainage projects" instead of specific technical terms)
+- **Try different keywords** (e.g., "expensive projects", "recent completions")
+- **Include region names** (e.g., "Region VII", "NCR", "Mindanao")
+
+### 📋 Popular Search Examples:
+- "Most expensive projects in Cebu"
+- "Drainage projects completed in 2023"
+- "Top contractors in Region VII"
+- "Bridge projects in Manila"
+- "Recent flood control projects"
+
+*The database contains 9,800+ flood control projects across all Philippine regions.*
+"""
     
     def is_available(self) -> bool:
         """Check if LLM service is available."""

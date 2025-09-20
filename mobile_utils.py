@@ -223,57 +223,9 @@ def inject_mobile_meta_tags():
     components.html(mobile_meta_html, height=0)
 
 def add_mobile_navigation():
-    """Add mobile-specific navigation elements."""
-    mobile_nav_html = """
-    <div id="mobile-nav" style="display: none;">
-        <style>
-            @media (max-width: 768px) {
-                #mobile-nav {
-                    display: block !important;
-                    position: fixed;
-                    bottom: 0;
-                    left: 0;
-                    right: 0;
-                    background: white;
-                    border-top: 1px solid #e0e0e0;
-                    padding: 10px;
-                    z-index: 1000;
-                    box-shadow: 0 -2px 10px rgba(0,0,0,0.1);
-                }
-                
-                .mobile-nav-button {
-                    background: #667eea;
-                    color: white;
-                    border: none;
-                    padding: 8px 12px;
-                    margin: 0 5px;
-                    border-radius: 15px;
-                    font-size: 12px;
-                    cursor: pointer;
-                    transition: all 0.3s ease;
-                }
-                
-                .mobile-nav-button:hover {
-                    background: #5a6fd8;
-                    transform: translateY(-1px);
-                }
-                
-                /* Add bottom padding to main content to account for fixed nav */
-                .main .block-container {
-                    padding-bottom: 80px !important;
-                }
-            }
-        </style>
-        
-        <div style="text-align: center;">
-            <button class="mobile-nav-button" onclick="window.scrollTo(0, 0)">⬆️ Top</button>
-            <button class="mobile-nav-button" onclick="document.querySelector('[data-testid=\\"stSidebar\\"]').click()">☰ Menu</button>
-            <button class="mobile-nav-button" onclick="window.location.reload()">🔄 Refresh</button>
-        </div>
-    </div>
-    """
-    
-    components.html(mobile_nav_html, height=60)
+    """Add mobile-specific navigation elements - DISABLED per user request."""
+    # Mobile navigation removed per user request
+    pass
 
 def optimize_for_mobile():
     """Apply comprehensive mobile optimizations."""

@@ -20,10 +20,44 @@ optimize_for_mobile()
 # Mobile-responsive CSS
 st.markdown("""
 <style>
+    /* Remove top spacing and optimize layout */
+    .main .block-container {
+        padding-top: 1rem;
+        padding-bottom: 2rem;
+    }
+    
+    /* Hide Streamlit header and menu */
+    header[data-testid="stHeader"] {
+        height: 0;
+        display: none;
+    }
+    
+    /* Reduce top margin */
+    .stApp > header {
+        display: none;
+    }
+    
+    /* Hide any status messages that might appear */
+    .stAlert[data-baseweb="notification"] {
+        display: none !important;
+    }
+    
+    /* Hide success/info/warning messages at startup */
+    div[data-testid="stNotificationContentSuccess"],
+    div[data-testid="stNotificationContentInfo"],
+    div[data-testid="stNotificationContentWarning"] {
+        display: none !important;
+    }
+    
+    /* Compact layout */
+    .element-container {
+        margin-bottom: 0.5rem;
+    }
+    
     /* Mobile-first responsive design */
     @media (max-width: 768px) {
         .main .block-container {
-            padding-top: 1rem;
+            padding-top: 0.5rem;
             padding-left: 1rem;
             padding-right: 1rem;
             max-width: 100%;
@@ -310,36 +344,9 @@ def render_mobile_sidebar():
                 """, unsafe_allow_html=True)
 
 def render_quick_questions():
-    """Render quick question buttons for mobile."""
-    st.subheader("💡 Quick Questions")
-    
-    quick_questions = [
-        "Projects in Region IV-B?",
-        "Most expensive projects?",
-        "Projects in Palawan?",
-        "Top contractors?",
-        "2024 completions?",
-        "Drainage projects?"
-    ]
-    
-    # Create responsive grid
-    cols = st.columns(2)
-    for i, question in enumerate(quick_questions):
-        with cols[i % 2]:
-            if st.button(question, key=f"quick_{i}", use_container_width=True):
-                # Expand the question for better context
-                full_questions = [
-                    "What flood control projects are in Region IV-B?",
-                    "What are the most expensive flood control projects?",
-                    "Show me all projects in Palawan province",
-                    "Which contractor has completed the most projects?",
-                    "Show me projects completed in 2024",
-                    "Which projects involve drainage system construction?"
-                ]
-                
-                # Add to query input
-                st.session_state.quick_query = full_questions[i]
-                st.rerun()
+    """Render quick question buttons for mobile - DISABLED per user request."""
+    # Quick questions removed per user request
+    pass
 
 def main():
     """Main application function."""
@@ -383,9 +390,6 @@ def main():
                 st.write(f"• {question}")
         
         return
-    
-    # Quick questions for mobile users
-    render_quick_questions()
     
     # Chat interface
     st.subheader("💬 Ask About Flood Control Projects")
@@ -444,51 +448,7 @@ def main():
             
             st.rerun()
     
-    # Advanced features in mobile-friendly expander
-    if st.session_state.data_loaded:
-        with st.expander("🔍 Advanced Data Exploration"):
-            st.subheader("Filter and Explore Data")
-            
-            # Get column information
-            column_info = st.session_state.data_handler.get_column_info()
-            
-            # Create mobile-friendly filters
-            filters = {}
-            
-            if column_info:
-                selected_column = st.selectbox(
-                    "Select column to filter by:", 
-                    ["None"] + list(column_info.keys()),
-                    help="Choose a column to filter the data"
-                )
-                
-                if selected_column != "None":
-                    filter_value = st.text_input(
-                        f"Filter {selected_column} contains:",
-                        help=f"Enter text to search within {selected_column}"
-                    )
-                    if filter_value:
-                        filters[selected_column] = filter_value
-                        
-                        if st.button("Apply Filter", use_container_width=True):
-                            filtered_df = st.session_state.data_handler.filter_records(filters)
-                            st.success(f"Found {len(filtered_df)} matching records")
-                            
-                            if not filtered_df.empty:
-                                # Mobile-friendly dataframe display
-                                st.markdown("**Filtered Results (showing first 10 records):**")
-                                
-                                # Display key columns only for mobile
-                                key_columns = ['ProjectDescription', 'Region', 'Province', 'Contractor', 'ContractCost']
-                                display_columns = [col for col in key_columns if col in filtered_df.columns]
-                                
-                                if display_columns:
-                                    st.dataframe(
-                                        filtered_df[display_columns].head(10),
-                                        use_container_width=True
-                                    )
-                                else:
-                                    st.dataframe(filtered_df.head(10), use_container_width=True)
+    # Advanced data exploration removed per user request
 
 def show_footer():
     """Display mobile-friendly footer information."""
