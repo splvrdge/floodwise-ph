@@ -48,7 +48,6 @@ class FloodControlDataHandler:
             # Create searchable text by combining all text columns
             self._prepare_search_index()
             
-            # st.success(f"Successfully loaded {len(self.df):,} flood control project records from {source_description}.")  # Commented out to hide message
             return True
             
         except Exception as e:
@@ -147,7 +146,7 @@ class FloodControlDataHandler:
             'region ix': ['region ix', 'region 9', 'zamboanga'],
             'region x': ['region x', 'region 10', 'northern mindanao'],
             'region xi': ['region xi', 'region 11', 'davao region'],
-            'region xii': ['region xii', 'region 12', 'soccsksargen'],
+            'region xii': ['region xii', 'region 12', 'region twelve', 'soccsksargen'],
             'region xiii': ['region xiii', 'region 13', 'caraga'],
             'barmm': ['barmm', 'bangsamoro', 'armm'],
             'car': ['car', 'cordillera']
@@ -180,17 +179,23 @@ class FloodControlDataHandler:
             search_patterns.extend(['davao city', 'davao', 'capital.*davao'])
         elif location == 'manila':
             search_patterns.extend(['manila', 'metro manila', 'ncr'])
+        elif location == 'region xii':
+            search_patterns.extend(['region xii', 'region 12', 'soccsksargen'])
         
         # Create combined mask for all patterns
         location_mask = pd.Series([False] * len(df), index=df.index)
         
         for pattern in search_patterns:
-            pattern_mask = (
-                df['Municipality'].str.contains(pattern, case=False, na=False, regex=True) |
-                df['Province'].str.contains(pattern, case=False, na=False, regex=True) |
-                df['Region'].str.contains(pattern, case=False, na=False, regex=True)
-            )
-            location_mask = location_mask | pattern_mask
+            try:
+                pattern_mask = (
+                    df['Municipality'].str.contains(pattern, case=False, na=False, regex=True) |
+                    df['Province'].str.contains(pattern, case=False, na=False, regex=True) |
+                    df['Region'].str.contains(pattern, case=False, na=False, regex=True)
+                )
+                location_mask = location_mask | pattern_mask
+            except Exception:
+                # Skip problematic patterns
+                continue
         
         return df[location_mask]
     
@@ -238,6 +243,10 @@ class FloodControlDataHandler:
         if df.empty:
             return []
         
+        # Check if ContractCost column exists
+        if 'ContractCost' not in df.columns:
+            return []
+        
         # Filter out records with no cost data
         cost_df = df[df['ContractCost'].notna() & (df['ContractCost'] > 0)]
         
@@ -247,13 +256,13 @@ class FloodControlDataHandler:
         
         if 'expensive' in query or 'highest' in query:
             # Sort by contract cost descending
-            sorted_df = cost_df.sort_values('ContractCost', ascending=False, na_last=True)
+            sorted_df = cost_df.sort_values('ContractCost', ascending=False)
         elif 'cheapest' in query or 'lowest' in query:
             # Sort by contract cost ascending
-            sorted_df = cost_df.sort_values('ContractCost', ascending=True, na_last=True)
+            sorted_df = cost_df.sort_values('ContractCost', ascending=True)
         else:
             # Default to expensive
-            sorted_df = cost_df.sort_values('ContractCost', ascending=False, na_last=True)
+            sorted_df = cost_df.sort_values('ContractCost', ascending=False)
         
         return self._convert_to_records(sorted_df.head(top_k), 1.0)
     
@@ -269,7 +278,7 @@ class FloodControlDataHandler:
             for contractor in top_contractors:
                 contractor_projects = df[df['Contractor'] == contractor]
                 # Get the most expensive project from this contractor
-                top_project = contractor_projects.sort_values('ContractCost', ascending=False, na_last=True).iloc[0]
+                top_project = contractor_projects.sort_values('ContractCost', ascending=False, ).iloc[0]
                 record = top_project.to_dict()
                 record['similarity_score'] = 1.0
                 record['contractor_project_count'] = contractor_counts[contractor]
@@ -294,20 +303,20 @@ class FloodControlDataHandler:
             # Sort by completion date descending (most recent first)
             if 'CompletionDateActual' in completion_df.columns:
                 sorted_df = completion_df.sort_values(['CompletionYear', 'CompletionDateActual'], 
-                                                    ascending=[False, False], na_last=True)
+                                                    ascending=[False, False], )
             else:
-                sorted_df = completion_df.sort_values('CompletionYear', ascending=False, na_last=True)
+                sorted_df = completion_df.sort_values('CompletionYear', ascending=False, )
         elif 'oldest' in query or 'first' in query or 'early' in query:
             # Sort by completion date ascending (oldest first)
             if 'CompletionDateActual' in completion_df.columns:
                 sorted_df = completion_df.sort_values(['CompletionYear', 'CompletionDateActual'], 
-                                                    ascending=[True, True], na_last=True)
+                                                    ascending=[True, True], )
             else:
-                sorted_df = completion_df.sort_values('CompletionYear', ascending=True, na_last=True)
+                sorted_df = completion_df.sort_values('CompletionYear', ascending=True, )
         else:
             # Default to recent, but also consider cost for relevance
             sorted_df = completion_df.sort_values(['CompletionYear', 'ContractCost'], 
-                                                ascending=[False, False], na_last=True)
+                                                ascending=[False, False], )
         
         return self._convert_to_records(sorted_df.head(top_k), 1.0)
     
@@ -368,9 +377,9 @@ class FloodControlDataHandler:
         if 'ContractCost' in type_filtered.columns and 'CompletionYear' in type_filtered.columns:
             # Multi-criteria sorting: recent projects with higher costs first
             sorted_df = type_filtered.sort_values(['CompletionYear', 'ContractCost'], 
-                                                ascending=[False, False], na_last=True)
+                                                ascending=[False, False], )
         elif 'ContractCost' in type_filtered.columns:
-            sorted_df = type_filtered.sort_values('ContractCost', ascending=False, na_last=True)
+            sorted_df = type_filtered.sort_values('ContractCost', ascending=False, )
         else:
             sorted_df = type_filtered
         
@@ -391,7 +400,7 @@ class FloodControlDataHandler:
         else:
             # Default: show top projects by cost within location
             sorted_df = df.sort_values(['ContractCost', 'CompletionYear'], 
-                                     ascending=[False, False], na_last=True)
+                                     ascending=[False, False], )
             return self._convert_to_records(sorted_df.head(top_k), 1.0)
     
     def _handle_location_count_queries(self, df: pd.DataFrame, query: str, top_k: int) -> List[Dict[str, Any]]:
@@ -504,7 +513,7 @@ class FloodControlDataHandler:
             term_projects = df[term_mask]
             if not term_projects.empty:
                 # Get top project for this term
-                top_project = term_projects.sort_values('ContractCost', ascending=False, na_last=True).iloc[0]
+                top_project = term_projects.sort_values('ContractCost', ascending=False, ).iloc[0]
                 record = top_project.to_dict()
                 record['comparison_term'] = term
                 record['similarity_score'] = 1.0
@@ -522,7 +531,7 @@ class FloodControlDataHandler:
             for region in regions:
                 region_projects = df[df['Region'] == region]
                 if not region_projects.empty:
-                    top_project = region_projects.sort_values('ContractCost', ascending=False, na_last=True).iloc[0]
+                    top_project = region_projects.sort_values('ContractCost', ascending=False, ).iloc[0]
                     record = top_project.to_dict()
                     record['comparison_category'] = 'region'
                     record['similarity_score'] = 1.0
@@ -530,7 +539,7 @@ class FloodControlDataHandler:
             return results
         else:
             # General top projects for comparison
-            sorted_df = df.sort_values('ContractCost', ascending=False, na_last=True)
+            sorted_df = df.sort_values('ContractCost', ascending=False, )
             return self._convert_to_records(sorted_df.head(top_k), 1.0)
     
     def _semantic_search(self, df: pd.DataFrame, query: str, top_k: int) -> List[Dict[str, Any]]:
