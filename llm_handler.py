@@ -29,7 +29,12 @@ class LLMHandler:
             api_key = os.getenv('OPENAI_API_KEY')
         
         if api_key:
-            self.client = openai.OpenAI(api_key=api_key)
+            try:
+                self.client = openai.OpenAI(api_key=api_key)
+            except Exception as e:
+                st.error(f"⚠️ Failed to initialize OpenAI client: {str(e)}")
+                st.info("The app will continue to work with basic functionality (no AI responses).")
+                self.client = None
         else:
             st.warning("⚠️ OpenAI API key not found. Please set OPENAI_API_KEY in Streamlit secrets or .env file.")
     
