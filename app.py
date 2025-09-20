@@ -1,367 +1,39 @@
 import streamlit as st
-import pandas as pd
+import os
 from data_handler import FloodControlDataHandler
 from llm_handler import LLMHandler
 from mobile_utils import optimize_for_mobile
-import os
-from typing import Dict, Any
 
 # Page configuration
 st.set_page_config(
     page_title="FloodWise PH - Philippines Flood Control Intelligence",
     page_icon="🌊",
     layout="wide",
-    initial_sidebar_state="auto"  # Changed to auto for better mobile experience
+    initial_sidebar_state="auto"
 )
 
 # Apply mobile optimizations
 optimize_for_mobile()
 
-# Enhanced UI with cohesive design system
+# Global styles
 st.markdown("""
 <style>
-    /* Import modern fonts */
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
-    
-    /* CSS Variables for consistent theming */
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
     :root {
-        --primary-blue: #0066CC;
-        --primary-blue-light: #E6F3FF;
-        --primary-blue-dark: #004499;
-        --secondary-teal: #00A693;
-        --accent-orange: #FF6B35;
-        --text-primary: #1E293B;
-        --text-secondary: #64748B;
-        --text-muted: #94A3B8;
-        --bg-primary: #FFFFFF;
-        --bg-secondary: #F8FAFC;
-        --bg-card: #FFFFFF;
-        --border-light: #E2E8F0;
-        --border-medium: #CBD5E1;
-        --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
-        --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
-        --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
-        --radius-sm: 6px;
-        --radius-md: 8px;
-        --radius-lg: 12px;
+        --blue: #0066CC; --blue-dark: #004499; --teal: #00A693;
+        --text: #1E293B; --text-light: #64748B; --bg: #F8FAFC; --card: #FFFFFF;
+        --border: #E2E8F0; --shadow: 0 1px 3px rgba(0,0,0,.1);
     }
-    
-    /* Base typography */
-    .stApp {
-        font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-        background-color: var(--bg-secondary);
-        color: var(--text-primary);
-    }
-    
-    /* Remove Streamlit branding and optimize layout */
-    .main .block-container {
-        padding-top: 1rem;
-        padding-bottom: 2rem;
-        max-width: 1200px;
-    }
-    
-    header[data-testid="stHeader"] {
-        height: 0;
-        display: none;
-    }
-    
-    .stApp > header {
-        display: none;
-    }
-    
-    /* Hide notifications */
-    .stAlert[data-baseweb="notification"],
-    div[data-testid="stNotificationContentSuccess"],
-    div[data-testid="stNotificationContentInfo"],
-    div[data-testid="stNotificationContentWarning"] {
-        display: none !important;
-    }
-    
-    /* Enhanced title styling */
-    .main h1 {
-        font-family: 'Inter', sans-serif;
-        font-weight: 700;
-        font-size: 2.5rem;
-        color: var(--primary-blue);
-        margin-bottom: 0.5rem;
-        text-align: center;
-        background: linear-gradient(135deg, var(--primary-blue) 0%, var(--secondary-teal) 100%);
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-        background-clip: text;
-    }
-    
-    /* Subtitle styling */
-    .main p {
-        font-size: 1.1rem;
-        color: var(--text-secondary);
-        text-align: center;
-        margin-bottom: 2rem;
-        line-height: 1.6;
-    }
-    
-    /* Section headers */
-    .main h2, .main h3 {
-        font-family: 'Inter', sans-serif;
-        font-weight: 600;
-        color: var(--text-primary);
-        margin-top: 2rem;
-        margin-bottom: 1rem;
-    }
-    
-    .main h2 {
-        font-size: 1.5rem;
-        border-bottom: 2px solid var(--primary-blue-light);
-        padding-bottom: 0.5rem;
-    }
-    
-    .main h3 {
-        font-size: 1.25rem;
-        color: var(--primary-blue);
-    }
-    
-    /* Enhanced button styling */
-    .stButton > button {
-        font-family: 'Inter', sans-serif;
-        font-weight: 500;
-        font-size: 0.95rem;
-        border-radius: var(--radius-md);
-        border: 2px solid transparent;
-        padding: 0.75rem 1.5rem;
-        transition: all 0.2s ease;
-        box-shadow: var(--shadow-sm);
-        background: linear-gradient(135deg, var(--primary-blue) 0%, var(--primary-blue-dark) 100%);
-        color: white;
-        min-height: 48px;
-    }
-    
-    .stButton > button:hover {
-        transform: translateY(-1px);
-        box-shadow: var(--shadow-md);
-        background: linear-gradient(135deg, var(--primary-blue-dark) 0%, var(--primary-blue) 100%);
-    }
-    
-    .stButton > button:active {
-        transform: translateY(0);
-        box-shadow: var(--shadow-sm);
-    }
-    
-    /* Secondary button styling */
-    .stButton > button[kind="secondary"] {
-        background: var(--bg-card);
-        color: var(--primary-blue);
-        border: 2px solid var(--primary-blue);
-    }
-    
-    .stButton > button[kind="secondary"]:hover {
-        background: var(--primary-blue-light);
-        border-color: var(--primary-blue-dark);
-    }
-    
-    /* Enhanced tab styling */
-    .stTabs [data-baseweb="tab-list"] {
-        gap: 0.5rem;
-        background: var(--bg-card);
-        padding: 0.5rem;
-        border-radius: var(--radius-lg);
-        box-shadow: var(--shadow-sm);
-        border: 1px solid var(--border-light);
-    }
-    
-    .stTabs [data-baseweb="tab"] {
-        font-family: 'Inter', sans-serif;
-        font-weight: 500;
-        font-size: 0.9rem;
-        padding: 0.75rem 1rem;
-        border-radius: var(--radius-md);
-        border: none;
-        background: transparent;
-        color: var(--text-secondary);
-        transition: all 0.2s ease;
-    }
-    
-    .stTabs [aria-selected="true"] {
-        background: linear-gradient(135deg, var(--primary-blue) 0%, var(--secondary-teal) 100%);
-        color: white;
-        box-shadow: var(--shadow-sm);
-    }
-    
-    .stTabs [data-baseweb="tab"]:hover {
-        background: var(--primary-blue-light);
-        color: var(--primary-blue);
-    }
-    
-    /* Enhanced form styling */
-    .stTextInput > div > div > input {
-        font-family: 'Inter', sans-serif;
-        font-size: 1rem;
-        padding: 0.875rem 1rem;
-        border-radius: var(--radius-md);
-        border: 2px solid var(--border-light);
-        background: var(--bg-card);
-        transition: all 0.2s ease;
-        box-shadow: var(--shadow-sm);
-    }
-    
-    .stTextInput > div > div > input:focus {
-        border-color: var(--primary-blue);
-        box-shadow: 0 0 0 3px var(--primary-blue-light);
-        outline: none;
-    }
-    
-    /* Enhanced expander styling */
-    .streamlit-expanderHeader {
-        font-family: 'Inter', sans-serif;
-        font-weight: 600;
-        font-size: 1.1rem;
-        background: var(--bg-card);
-        border: 1px solid var(--border-light);
-        border-radius: var(--radius-md);
-        padding: 1rem;
-        color: var(--primary-blue);
-        box-shadow: var(--shadow-sm);
-    }
-    
-    .streamlit-expanderContent {
-        background: var(--bg-card);
-        border: 1px solid var(--border-light);
-        border-top: none;
-        border-radius: 0 0 var(--radius-md) var(--radius-md);
-        padding: 1.5rem;
-        box-shadow: var(--shadow-sm);
-    }
-    
-    /* Card-like containers */
-    .element-container {
-        margin-bottom: 1rem;
-    }
-    
-    /* Status message styling */
-    .status-error {
-        background: linear-gradient(135deg, #FEF2F2 0%, #FEE2E2 100%);
-        border: 1px solid #FECACA;
-        border-radius: var(--radius-md);
-        padding: 1rem;
-        color: #DC2626;
-        font-weight: 500;
-        box-shadow: var(--shadow-sm);
-    }
-    
-    .status-success {
-        background: linear-gradient(135deg, #F0FDF4 0%, #DCFCE7 100%);
-        border: 1px solid #BBF7D0;
-        border-radius: var(--radius-md);
-        padding: 1rem;
-        color: #16A34A;
-        font-weight: 500;
-        box-shadow: var(--shadow-sm);
-    }
-    
-    /* Chat message styling */
-    .chat-message {
-        background: var(--bg-card);
-        border: 1px solid var(--border-light);
-        border-radius: var(--radius-lg);
-        padding: 1.5rem;
-        margin: 1rem 0;
-        box-shadow: var(--shadow-sm);
-        font-family: 'Inter', sans-serif;
-    }
-    
-    .chat-message.user {
-        background: linear-gradient(135deg, var(--primary-blue-light) 0%, #F0F9FF 100%);
-        border-color: var(--primary-blue);
-        margin-left: 2rem;
-    }
-    
-    .chat-message.assistant {
-        background: var(--bg-card);
-        margin-right: 2rem;
-    }
-    
-    .chat-header {
-        font-weight: 600;
-        font-size: 0.9rem;
-        color: var(--primary-blue);
-        margin-bottom: 0.75rem;
-        display: flex;
-        align-items: center;
-        gap: 0.5rem;
-    }
-    
-    /* Sidebar styling */
-    .css-1d391kg {
-        background: var(--bg-card);
-        border-right: 1px solid var(--border-light);
-    }
-    
-    /* Code blocks */
-    .stCode {
-        font-family: 'JetBrains Mono', monospace;
-        background: var(--bg-secondary);
-        border: 1px solid var(--border-light);
-        border-radius: var(--radius-md);
-    }
-    
-    /* Compact layout */
-    .element-container {
-        margin-bottom: 0.5rem;
-    }
-    
-    /* Mobile-first responsive design */
-    @media (max-width: 768px) {
-        .main .block-container {
-            padding-top: 0.5rem;
-            padding-left: 1rem;
-            padding-right: 1rem;
-        }
-        
-        .main h1 {
-            font-size: 2rem;
-        }
-        
-        .main h2 {
-            font-size: 1.25rem;
-        }
-        
-        .stButton > button {
-            font-size: 0.9rem;
-            padding: 0.625rem 1rem;
-            min-height: 44px;
-        }
-        
-        .stTabs [data-baseweb="tab"] {
-            font-size: 0.8rem;
-            padding: 0.5rem 0.75rem;
-        }
-        
-        .chat-message.user {
-            margin-left: 0.5rem;
-        }
-        
-        .chat-message.assistant {
-            margin-right: 0.5rem;
-        }
-    }
-    
-    /* Dark mode support */
-    @media (prefers-color-scheme: dark) {
-        :root {
-            --text-primary: #F1F5F9;
-            --text-secondary: #CBD5E1;
-            --text-muted: #64748B;
-            --bg-primary: #0F172A;
-            --bg-secondary: #1E293B;
-            --bg-card: #334155;
-            --border-light: #475569;
-            --border-medium: #64748B;
-        }
-    }
-    
-    /* Smooth animations */
-    * {
-        transition: background-color 0.2s ease, border-color 0.2s ease, color 0.2s ease;
-    }
+    body, .stApp { font-family: 'Inter', sans-serif; background: var(--bg); color: var(--text); }
+    h1,h2,h3 { font-weight: 600; }
+    .status { border-radius:8px;padding:1rem;margin:.5rem 0;box-shadow:var(--shadow); }
+    .status.success { background:#F0FDF4; border:1px solid #BBF7D0; color:#16A34A; }
+    .status.error { background:#FEF2F2; border:1px solid #FECACA; color:#DC2626; }
+    .status.warn { background:#FFFBEB; border:1px solid #FDE68A; color:#B45309; }
+    .chat { padding:1rem;border-radius:10px;margin:0.5rem 0;box-shadow:var(--shadow); }
+    .chat.user { background:#E6F3FF; }
+    .chat.assistant { background:#fff; }
+    footer { text-align:center;color:var(--text-light);font-size:0.85rem;margin-top:2rem; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -375,314 +47,90 @@ if 'chat_history' not in st.session_state:
 if 'data_loaded' not in st.session_state:
     st.session_state.data_loaded = False
 
-# Auto-load the dataset on first run
+# Try loading dataset automatically
 if not st.session_state.data_loaded:
-    # Try multiple possible paths
-    possible_paths = [
+    dataset_paths = [
         "Dataset/flood-control-projects-table_2025-09-20.csv",
         "./Dataset/flood-control-projects-table_2025-09-20.csv",
-        os.path.join(os.path.dirname(__file__), "Dataset", "flood-control-projects-table_2025-09-20.csv")
+        os.path.join(os.path.dirname(__file__), "Dataset", "flood-control-projects-table_2025-09-20.csv"),
     ]
-    
-    dataset_loaded = False
-    for dataset_path in possible_paths:
-        if os.path.exists(dataset_path):
-            try:
-                with st.spinner("Loading flood control projects dataset..."):
-                    if st.session_state.data_handler.load_csv_from_path(dataset_path):
-                        st.session_state.data_loaded = True
-                        dataset_loaded = True
-                        break
-            except Exception as e:
-                st.error(f"Error loading dataset from {dataset_path}: {str(e)}")
-                continue
-    
-    if not dataset_loaded:
-        st.warning("Dataset file not found. Please ensure the CSV file is in the Dataset folder.")
+    for path in dataset_paths:
+        if os.path.exists(path) and st.session_state.data_handler.load_csv_from_path(path):
+            st.session_state.data_loaded = True
+            break
 
-def render_mobile_header():
-    """Render mobile-optimized header."""
-    col1, col2 = st.columns([3, 1])
-    with col1:
-        st.title("🌊 FloodWise PH")
-        st.markdown("**Philippines Flood Control Intelligence**")
-    with col2:
-        # Mobile menu toggle
-        if st.button("☰ Menu", key="mobile_menu"):
-            st.session_state.show_sidebar = not st.session_state.get('show_sidebar', False)
-
-def render_chat_message(message_type, content, index):
-    """Render individual chat message with clean formatting."""
-    if message_type == "user":
-        st.markdown("**🙋‍♂️ You:**")
-        st.markdown(content)
-    else:
-        st.markdown("**🤖 Assistant:**")
-        st.markdown(content)
-
-def render_mobile_sidebar():
-    """Render mobile-optimized sidebar content."""
+# Components
+def sidebar():
     with st.sidebar:
-        st.markdown("### 📱 FloodWise PH")
-        
-        # Data information
+        st.markdown("### 📊 Dataset")
         if st.session_state.data_loaded:
-            with st.expander("📊 Dataset Info", expanded=False):
-                try:
-                    stats = st.session_state.data_handler.get_summary_stats()
-                    st.markdown(f"""
-                    <div class="status-success">
-                        ✅ <strong>Dataset Loaded</strong><br>
-                        📊 {stats['total_records']:,} records<br>
-                        📋 {len(stats['columns'])} columns<br>
-                        🌏 {stats['unique_regions']} regions<br>
-                        📅 {stats['date_range']} period
-                    </div>
-                    """, unsafe_allow_html=True)
-                except Exception as e:
-                    st.markdown(f"""
-                    <div class="status-warning">
-                        ⚠️ <strong>Dataset Loaded</strong><br>
-                        📊 Data available but stats unavailable<br>
-                        Error: {str(e)[:50]}...
-                    </div>
-                    """, unsafe_allow_html=True)
-        else:
-            st.markdown("""
-            <div class="status-warning">
-                ⚠️ Dataset not loaded
-            </div>
-            """, unsafe_allow_html=True)
-            
-            # Fallback upload
-            uploaded_file = st.file_uploader(
-                "Upload CSV",
-                type=['csv'],
-                help="Upload flood control project data"
+            stats = st.session_state.data_handler.get_summary_stats()
+            st.markdown(
+                f"<div class='status success'>✅ Loaded {stats['total_records']:,} records<br>"
+                f"📋 {len(stats['columns'])} columns<br>"
+                f"🌏 {stats['unique_regions']} regions<br>"
+                f"📅 {stats['date_range']}</div>",
+                unsafe_allow_html=True,
             )
-            
-            if uploaded_file and st.button("Load Data", key="load_mobile"):
-                with st.spinner("Loading..."):
-                    if st.session_state.data_handler.load_csv(uploaded_file):
-                        st.session_state.data_loaded = True
-                        st.rerun()
-        
-        # AI Status
-        with st.expander("🤖 AI Status", expanded=False):
-            if st.session_state.llm_handler.is_available():
-                st.markdown("""
-                <div class="status-success">
-                    ✅ AI Model Ready
-                </div>
-                """, unsafe_allow_html=True)
-            else:
-                st.markdown("""
-                <div class="status-warning">
-                    ⚠️ Basic mode (no AI)
-                </div>
-                """, unsafe_allow_html=True)
+        else:
+            st.markdown("<div class='status warn'>⚠️ Dataset not loaded</div>", unsafe_allow_html=True)
+            uploaded = st.file_uploader("Upload CSV", type=['csv'])
+            if uploaded and st.button("Load"):
+                if st.session_state.data_handler.load_csv(uploaded):
+                    st.session_state.data_loaded = True
+                    st.rerun()
 
-def render_quick_questions():
-    """Render quick question buttons for mobile - DISABLED per user request."""
-    # Quick questions removed per user request
-    pass
+        st.markdown("### 🤖 AI")
+        if st.session_state.llm_handler.is_available():
+            st.markdown("<div class='status success'>✅ AI Model Ready</div>", unsafe_allow_html=True)
+        else:
+            st.markdown("<div class='status warn'>⚠️ Basic mode (no AI)</div>", unsafe_allow_html=True)
 
-def main():
-    """Main application function."""
-    # Enhanced Header with better typography and icons
-    st.markdown("""
-    <div style="text-align: center; margin-bottom: 2rem;">
-        <h1 style="margin-bottom: 0.5rem;">🌊 FloodWise PH</h1>
-        <p style="font-size: 1.2rem; color: var(--text-secondary); margin-bottom: 0;">
-            <strong>🇵🇭 Philippines Flood Control Intelligence Platform</strong>
-        </p>
-        <p style="color: var(--text-muted); margin-top: 0.5rem;">
-            💡 Projects • 🏗️ Contractors • 💰 Costs • 📍 Locations • 🛡️ Mitigation Works
-        </p>
-    </div>
-    """, unsafe_allow_html=True)
-    
-    # Sidebar for data information and configuration
-    render_mobile_sidebar()
-    
-    # Main chat interface
-    if not st.session_state.data_loaded:
-        st.markdown("""
-        <div class="status-error">
-            ❌ Dataset could not be loaded. Please check if the dataset file exists in the Dataset folder.
-        </div>
-        """, unsafe_allow_html=True)
-        
-        st.info("💡 Expected file: `Dataset/flood-control-projects-table_2025-09-20.csv`")
-        return
-    
-    # Sample Questions Section (when data is loaded)
-    if not st.session_state.chat_history:  # Only show when no chat history
-        # Organize sample questions by category with better icons
-        sample_categories = {
-            "💰 Cost & Budget": [
-                "💸 What are the most expensive projects in Cebu City?",
-                "💵 What project has the least budget?",
-                "📊 What's the average spending on flood control projects in Region VII?",
-                "🔍 Show me projects under ₱10 million",
-                "📈 Which projects went over budget?"
-            ],
-            "📍 Location-Based": [
-                "🏝️ Show me all projects in Palawan",
-                "🌏 What flood control projects are in Region IV-B?",
-                "🏙️ How many projects are in Metro Manila?",
-                "🗺️ Which province has the most projects?",
-                "📍 List projects in Puerto Princesa City"
-            ],
-            "🏗️ Contractors": [
-                "👷 Which contractor built the most projects?",
-                "🏆 Who constructed the most expensive project?",
-                "🔍 Show me projects by AZARRAGA CONSTRUCTION",
-                "🌐 Which contractors work in multiple regions?",
-                "📊 Top 5 contractors by project count"
-            ],
-            "📅 Timeline": [
-                "🆕 What projects were completed in 2024?",
-                "⏰ Show me recent flood control projects",
-                "🔮 Which projects are scheduled for 2025?",
-                "🚰 What drainage projects were finished in 2023?",
-                "📜 Oldest projects in the database"
-            ],
-            "🔧 Project Types": [
-                "🏗️ What types of flood control structures are there?",
-                "🚰 Show me all drainage projects",
-                "🌉 List bridge flood control projects",
-                "🌊 What seawall projects exist?",
-                "⛰️ Slope protection projects in mountainous areas"
-            ],
-            "📊 Analysis": [
-                "📈 How many total projects are in the dataset?",
-                "🗺️ What is the distribution of projects by region?",
-                "📊 Show the trend of funding from 2020-2024",
-                "📅 Which year had the most projects?",
-                "⚖️ Compare Manila vs Cebu investments"
-            ]
-        }
-        
-        # Show total count
-        total_samples = sum(len(questions) for questions in sample_categories.values())
-        st.markdown(f"**{total_samples} sample questions organized by category:**")
-        
-        # Create tabs for different categories
-        tabs = st.tabs(list(sample_categories.keys()))
-        
-        for i, (category, questions) in enumerate(sample_categories.items()):
-            with tabs[i]:
-                st.markdown(f"**Click any question to try it:**")
-                
-                # Create clickable buttons for each question
-                for j, question in enumerate(questions):
-                    if st.button(question, key=f"sample_{i}_{j}", use_container_width=True):
-                        # Set the question in session state and rerun
-                        st.session_state.quick_query = question
-                        st.rerun()
-                
-                # Add a text note
-                st.markdown("*💡 You can also type your own questions in the input box below.*")
-    
-    # Chat interface
+def chat_ui():
     st.subheader("💬 Ask About Flood Control Projects")
-    
-    # Add sample questions button for users who already have chat history
     if st.session_state.chat_history:
-        with st.expander("💡 Need inspiration? View sample questions", expanded=False):
-            st.markdown("**🚀 Quick Examples:**")
-            quick_examples = [
-                "💰 What are the most expensive projects in Manila?",
-                "🏗️ Which contractor has the most projects?",
-                "🚰 Show me recent drainage projects",
-                "📊 How many projects are in Region VII?",
-                "💵 What's the average project cost in Palawan?"
-            ]
-            
-            cols = st.columns(len(quick_examples))
-            for i, example in enumerate(quick_examples):
-                with cols[i]:
-                    if st.button(example, key=f"quick_{i}", use_container_width=True):
-                        st.session_state.quick_query = example
-                        st.rerun()
-    
-    # Display chat history with mobile-friendly styling
-    if st.session_state.chat_history:
-        st.markdown("### Chat History")
-        for i, (question, answer) in enumerate(st.session_state.chat_history):
-            render_chat_message("user", question, i)
-            render_chat_message("assistant", answer, i)
-            st.markdown("---")
-    
-    # Query input with mobile optimization
+        for i, (q, a) in enumerate(st.session_state.chat_history):
+            st.markdown(f"<div class='chat user'><b>You:</b> {q}</div>", unsafe_allow_html=True)
+            st.markdown(f"<div class='chat assistant'><b>Assistant:</b> {a}</div>", unsafe_allow_html=True)
+
     with st.form("query_form", clear_on_submit=True):
-        # Pre-fill with quick query if selected
-        default_query = st.session_state.get('quick_query', '')
-        if default_query:
-            st.session_state.quick_query = ''  # Clear after use
-        
-        user_query = st.text_input(
-            "Enter your question:",
-            value=default_query,
-            placeholder="e.g., What are the most expensive flood control projects in Cebu City?",
-            help="💡 Ask about: 💰 Costs & budgets | 📍 Locations & regions | 🏗️ Contractors | 📅 Timelines | 🔧 Project types | 📊 Analysis & insights"
-        )
-        
-        # Mobile-friendly button layout
+        query = st.text_input("Enter your question:")
         col1, col2 = st.columns([2, 1])
         with col1:
-            submit_button = st.form_submit_button("Ask Question", type="primary", use_container_width=True)
+            ask = st.form_submit_button("Ask", type="primary", use_container_width=True)
         with col2:
-            clear_button = st.form_submit_button("Clear", use_container_width=True)
-    
-    # Handle form submissions
-    if clear_button:
+            clear = st.form_submit_button("Clear", use_container_width=True)
+
+    if clear:
         st.session_state.chat_history = []
         st.rerun()
-    
-    if submit_button and user_query.strip():
-        with st.spinner("🔍 Searching and generating response..."):
-            # Search for relevant records
-            relevant_records = st.session_state.data_handler.search_relevant_records(
-                user_query, top_k=5
-            )
-            
-            # Get context information
-            context_info = st.session_state.data_handler.get_summary_stats()
-            
-            # Generate response
-            response = st.session_state.llm_handler.generate_response(
-                user_query, relevant_records, context_info
-            )
-            
-            # Add to chat history
-            st.session_state.chat_history.append((user_query, response))
-            
+    if ask and query.strip():
+        with st.spinner("Processing..."):
+            records = st.session_state.data_handler.search_relevant_records(query, top_k=5)
+            context = st.session_state.data_handler.get_summary_stats()
+            answer = st.session_state.llm_handler.generate_response(query, records, context)
+            st.session_state.chat_history.append((query, answer))
             st.rerun()
-    
-    # Advanced data exploration removed per user request
 
-def show_footer():
-    """Display enhanced footer with cohesive design."""
-    st.markdown("---")
+def footer():
     st.markdown(
-        """
-        <div style='text-align: center; color: var(--text-muted); padding: 2rem 1rem; background: var(--bg-card); border-radius: var(--radius-lg); margin-top: 2rem; border: 1px solid var(--border-light);'>
-            <h4 style='color: var(--primary-blue); margin-bottom: 0.5rem; font-weight: 600;'>🌊 FloodWise PH</h4>
-            <p style='margin-bottom: 0.5rem; font-size: 1rem;'><strong>🇵🇭 Philippines Flood Control Intelligence Platform</strong></p>
-            <p style='font-size: 0.9rem; margin-bottom: 1rem;'>Empowering informed decisions through intelligent data analysis</p>
-            <div style='display: flex; justify-content: center; gap: 1rem; flex-wrap: wrap; font-size: 0.85rem;'>
-                <span>🚀 Built with Streamlit</span>
-                <span>🤖 Powered by AI</span>
-                <span>📊 Real-time Analytics</span>
-                <span>📱 Mobile Optimized</span>
-            </div>
-        </div>
-        """, 
-        unsafe_allow_html=True
+        "<footer>🌊 FloodWise PH • 🇵🇭 Philippines Flood Control Intelligence<br>"
+        "🚀 Built with Streamlit • 🤖 AI-powered • 📱 Mobile Ready</footer>",
+        unsafe_allow_html=True,
     )
+
+# Main
+def main():
+    st.markdown("<h1 style='text-align:center'>🌊 FloodWise PH</h1>", unsafe_allow_html=True)
+    st.markdown("<p style='text-align:center;color:var(--text-light)'>Philippines Flood Control Intelligence</p>", unsafe_allow_html=True)
+
+    sidebar()
+    if st.session_state.data_loaded:
+        chat_ui()
+    else:
+        st.error("❌ Dataset could not be loaded. Please upload manually.")
+
+    footer()
 
 if __name__ == "__main__":
     main()
-    show_footer()
