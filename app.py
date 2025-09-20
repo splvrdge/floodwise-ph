@@ -5,52 +5,9 @@ import streamlit as st
 from data_handler import FloodControlDataHandler
 from llm_handler import LLMHandler
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-# Global styles
-st.markdown("""
-<style>
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
-    :root {
-        --blue: #0066CC; --blue-dark: #004499; --teal: #00A693;
-        --text: #1E293B; --text-light: #64748B; --bg: #F8FAFC; --card: #FFFFFF;
-        --border: #E2E8F0; --shadow: 0 1px 3px rgba(0,0,0,.1);
-    }
-    body, .stApp { 
-        font-family: 'Inter', sans-serif; 
-        background: var(--bg); 
-        color: var(--text);
-    }
-    .stChatInput { 
-        position: fixed;
-        bottom: 2rem;
-        left: 50%;
-        transform: translateX(-50%);
-        width: 80%;
-        max-width: 800px;
-        background: white;
-        padding: 1rem;
-        border-radius: 10px;
-        box-shadow: var(--shadow);
-    }
-    .stChatMessage {
-        margin-bottom: 1rem;
-    }
-    .stChatMessage p {
-        margin: 0;
-    }
-    .stButton>button {
-        width: 100%;
-        margin: 0.5rem 0;
-    }
-</style>
-""", unsafe_allow_html=True)
-
-def load_dataset():
+def load_dataset(handler=None, logger=None):
     """Try to load the dataset from common locations."""
-    if not st.session_state.data_loaded:
+    if handler is None or logger is None:
         dataset_paths = [
             "Dataset/flood-control-projects-table_2025-09-20.csv",
             "./Dataset/flood-control-projects-table_2025-09-20.csv",
@@ -59,14 +16,14 @@ def load_dataset():
         for path in dataset_paths:
             if os.path.exists(path):
                 try:
-                    if st.session_state.data_handler.load_csv_from_path(path):
-                        st.session_state.data_loaded = True
-                        st.success(f"Successfully loaded dataset from {path}")
+                    if handler.load_csv_from_path(path):
+                        # Set loaded flag
+                        logger.info(f"Successfully loaded dataset from {path}")
                         return True
                 except Exception as e:
                     logger.error(f"Error loading dataset from {path}: {str(e)}")
                     continue
-    return st.session_state.data_loaded
+    return False  # Default return if handler is None
 
 # Components
 def sidebar():
@@ -103,6 +60,7 @@ def sidebar():
             if uploaded and st.button("Load"):
                 try:
                     if st.session_state.data_handler.load_csv(uploaded):
+                        # Set loaded flag
                         st.session_state.data_loaded = True
                         st.rerun()
                 except Exception as e:
