@@ -129,22 +129,40 @@ def chat_ui():
         st.rerun()
     if ask and query.strip():
         with st.spinner("Processing..."):
-            # Parse the query for number of results requested
-            import re
-            num_match = re.search(r'(?:show|list|top|first|get)\s+(?:me\s+)?(\d+)(?:\s+results?)?', query, re.IGNORECASE)
-            top_k = 10  # Default number of results
-            
-            if num_match:
-                try:
-                    top_k = min(int(num_match.group(1)), 50)  # Cap at 50 results for performance
-                except (ValueError, IndexError):
-                    pass
-                    
-            records = st.session_state.data_handler.search_relevant_records(query, top_k=top_k)
-            context = st.session_state.data_handler.get_summary_stats()
-            answer = st.session_state.llm_handler.generate_response(query, records, context)
-            st.session_state.chat_history.append((query, answer))
-            st.rerun()
+            try:
+                # Parse the query for number of results requested
+                import re
+                num_match = re.search(r'(?:show|list|top|first|get)\s+(?:me\s+)?(\d+)(?:\s+results?)?', query, re.IGNORECASE)
+                top_k = 10  # Default number of results
+                
+                if num_match:
+                    try:
+                        top_k = min(int(num_match.group(1)), 50)  # Cap at 50 results for performance
+                        print(f"Found number in query: {top_k}")
+                    except (ValueError, IndexError) as e:
+                        print(f"Error parsing number from query: {e}")
+                        pass
+                
+                print(f"Searching for: {query}")
+                records = st.session_state.data_handler.search_relevant_records(query, top_k=top_k)
+                print(f"Found {len(records)} records")
+                
+                context = st.session_state.data_handler.get_summary_stats()
+                print("Got summary stats")
+                
+                print("Generating response...")
+                answer = st.session_state.llm_handler.generate_response(query, records, context)
+                print("Response generated")
+                
+                st.session_state.chat_history.append((query, answer))
+                st.rerun()
+                
+            except Exception as e:
+                import traceback
+                error_details = traceback.format_exc()
+                print(f"Error in chat_ui: {error_details}")
+                st.session_state.chat_history.append((query, f"I'm sorry, I encountered an error: {str(e)}\n\nPlease try rephrasing your question or try again later."))
+                st.rerun()
 
 def footer():
     st.markdown(

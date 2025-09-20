@@ -670,45 +670,97 @@ class FloodControlDataHandler:
             return self._convert_to_records(sorted_df.head(top_k), 1.0)
     
     def _semantic_search(self, df: pd.DataFrame, query: str, top_k: int) -> List[Dict[str, Any]]:
-        """Perform semantic search using TF-IDF."""
+        """
+        Perform semantic search using TF-IDF with improved result quality.
+        
+        Args:
+            df: Filtered DataFrame to search within
+            query: Search query
+            top_k: Maximum number of results to return
+            
+        Returns:
+            List of matching records with similarity scores
+        """
         if df.empty:
             return []
-        
-        # Create search texts for filtered dataframe
-        search_texts = []
-        for _, row in df.iterrows():
-            text_parts = []
-            for col in self.text_columns:
-                if col in df.columns and pd.notna(row[col]):
-                    text_parts.append(str(row[col]))
-            search_texts.append(" ".join(text_parts))
-        
-        if not search_texts:
-            return []
-        
-        # Create temporary vectorizer for filtered data
-        temp_vectorizer = TfidfVectorizer(
-            stop_words='english',
-            max_features=1000,
-            ngram_range=(1, 2)
-        )
-        temp_tfidf_matrix = temp_vectorizer.fit_transform(search_texts)
-        
-        # Transform query and calculate similarities
-        query_vector = temp_vectorizer.transform([query])
-        similarities = cosine_similarity(query_vector, temp_tfidf_matrix).flatten()
-        
-        # Get top results
-        top_indices = np.argsort(similarities)[::-1][:top_k]
-        
-        results = []
-        for idx in top_indices:
-            if similarities[idx] > 0.05:  # Lower threshold for better results
-                record = df.iloc[idx].to_dict()
-                record['similarity_score'] = similarities[idx]
+            
+        try:
+            # Get indices of the filtered dataframe in the original dataframe
+            filtered_indices = df.index.tolist()
+            
+            # If no records after filtering, return empty list
+            if not filtered_indices:
+                return []
+            
+            # Transform query to TF-IDF
+            query_vec = self.vectorizer.transform([query])
+            
+            # Calculate cosine similarity between query and documents
+            cosine_similarities = cosine_similarity(query_vec, self.tfidf_matrix[filtered_indices]).flatten()
+            
+            # Get top k most similar documents, but only if they have some similarity
+            similarity_threshold = 0.05  # Minimum similarity score to include
+            
+            # Create a list of (index, score) pairs and filter by threshold
+            scored_docs = [(i, score) for i, score in enumerate(cosine_similarities) 
+                          if score > similarity_threshold]
+            
+            # Sort by score in descending order
+            scored_docs.sort(key=lambda x: x[1], reverse=True)
+            
+            # Take top k results
+            top_indices = [i for i, _ in scored_docs[:top_k]]
+            
+            # Convert to list of records with similarity scores
+            results = []
+            for i in top_indices:
+                record = df.iloc[i].to_dict()
+                record['_similarity'] = float(cosine_similarities[i])
                 results.append(record)
-        
-        return results
+            
+            # If no results above threshold, return the top result regardless
+            if not results and len(cosine_similarities) > 0:
+                best_idx = cosine_similarities.argmax()
+                if cosine_similarities[best_idx] > 0:  # Only include if some similarity exists
+                    record = df.iloc[best_idx].to_dict()
+                    record['_similarity'] = float(cosine_similarities[best_idx])
+                    results.append(record)
+            
+            return results
+            
+        except Exception as e:
+            print(f"Error in semantic search: {str(e)}")
+            # Fall back to simple text search if semantic search fails
+            return self._fallback_text_search(df, query, top_k)
+    
+    def _fallback_text_search(self, df: pd.DataFrame, query: str, top_k: int) -> List[Dict[str, Any]]:
+        """
+        Fallback text search when semantic search fails.
+        Performs a simple case-insensitive text search across all string columns.
+        """
+        try:
+            if df.empty:
+                return []
+                
+            # Create a mask for rows containing the query
+            mask = pd.Series(False, index=df.index)
+            
+            # Search in all string columns
+            for col in df.select_dtypes(include=['object']):
+                mask = mask | df[col].astype(str).str.lower().str.contains(query.lower(), na=False)
+            
+            # Get matching rows
+            results = df[mask].head(top_k).to_dict('records')
+            
+            # Add a default similarity score
+            for record in results:
+                record['_similarity'] = 1.0
+                
+            return results
+            
+        except Exception as e:
+            print(f"Error in fallback text search: {str(e)}")
+            return []
     
     def _convert_to_records(self, df: pd.DataFrame, score: float) -> List[Dict[str, Any]]:
         """Convert dataframe to list of records with similarity score."""

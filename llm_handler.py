@@ -106,6 +106,38 @@ class LLMHandler:
         
         return LegacyWrapper()
     
+    def _get_system_prompt(self, query_type: str) -> str:
+        """Get the appropriate system prompt based on query type."""
+        prompts = {
+            'location': 'You are an expert analyst of Philippine flood control projects. Provide detailed location-based information about flood control projects, including specific regions, provinces, cities, and municipalities.',
+            'time': 'You are a time-series analyst for flood control projects. Provide detailed temporal information about project timelines, including start dates, completion dates, and durations.',
+            'cost': 'You are a financial analyst specializing in infrastructure projects. Provide detailed cost information, including budgets, contract amounts, and cost comparisons.',
+            'contractor': 'You are a construction industry expert. Provide detailed information about contractors, including their project history and performance metrics.',
+            'type': 'You are a civil engineering expert. Provide detailed information about different types of flood control projects and their specifications.',
+            'general': 'You are a helpful assistant that provides information about flood control projects in the Philippines. Answer questions clearly and concisely.'
+        }
+        return prompts.get(query_type, prompts['general'])
+
+    def _prepare_prompt(self, query: str, records: List[Dict[str, Any]], context: Dict[str, Any] = None, query_type: str = 'general') -> str:
+        """Prepare the prompt for the LLM based on the query and records."""
+        # Format the records into a readable string
+        records_str = "\n\n".join([
+            f"Record {i+1}:\n" + "\n".join([f"{k}: {v}" for k, v in record.items()])
+            for i, record in enumerate(records)
+        ])
+        
+        # Include context if available
+        context_str = ""
+        if context:
+            context_str = f"\n\nContext about the dataset:\n{context}"
+        
+        return f"""Question: {query}
+
+Relevant project records:
+{records_str}{context_str}
+
+Please provide a clear and concise answer to the question based on the project records above. If the information is not available in the records, please state that clearly."""
+
     def generate_response(self, query: str, records: List[Dict[str, Any]], context: Dict[str, Any] = None) -> str:
         """
         Generate a response based on the query and relevant records.
@@ -118,12 +150,16 @@ class LLMHandler:
         Returns:
             Formatted response string
         """
-        if not self.client:
-            return "I'm sorry, the AI service is currently unavailable. Please try again later."
+        if not records:
+            return "I couldn't find any relevant information to answer your question. Please try rephrasing your query or ask about something else."
             
         try:
             # Determine query type
             query_type = self._classify_query(query)
+            
+            # If no client is available, use a fallback response
+            if not self.client:
+                return self._fallback_response(query, records)
             
             # Prepare the prompt with context and records
             prompt = self._prepare_prompt(query, records, context, query_type)
@@ -135,16 +171,73 @@ class LLMHandler:
                     {"role": "system", "content": self._get_system_prompt(query_type)},
                     {"role": "user", "content": prompt}
                 ],
-                temperature=0.7,
+                temperature=0.3,  # Lower temperature for more focused responses
                 max_tokens=1000
             )
             
-            return self._format_response(response.choices[0].message.content.strip(), query_type, len(records))
+            # Extract and clean the response
+            response_text = response.choices[0].message.content.strip()
+            return response_text
             
         except Exception as e:
+            # If there's an error with the LLM, fall back to a simpler response
             print(f"Error generating response: {str(e)}")
-            return "I encountered an error while processing your request. Please try again later."
+            return self._fallback_response(query, records)
             
+    def _fallback_response(self, query: str, records: List[Dict[str, Any]]) -> str:
+        """Generate a fallback response when the LLM is not available."""
+        if not records:
+            return "I couldn't find any information matching your query. Please try rephrasing your question."
+            
+        # Try to generate a basic response based on the records
+        try:
+            # Count records by contractor if it's a contractor query
+            if any(term in query.lower() for term in ['contractor', 'company']):
+                contractors = {}
+                for record in records:
+                    contractor = record.get('contractor', 'Unknown')
+                    contractors[contractor] = contractors.get(contractor, 0) + 1
+                
+                response = ["Here are the contractors I found:"]
+                for i, (contractor, count) in enumerate(sorted(contractors.items(), key=lambda x: x[1], reverse=True)[:5], 1):
+                    response.append(f"{i}. {contractor} ({count} projects)")
+                return "\n".join(response)
+                
+            # For location queries, list unique locations
+            elif any(term in query.lower() for term in ['location', 'region', 'province', 'city']):
+                locations = {}
+                for record in records:
+                    location = record.get('location', 'Unknown')
+                    locations[location] = locations.get(location, 0) + 1
+                
+                response = ["Here are the locations I found:"]
+                for i, (location, count) in enumerate(sorted(locations.items(), key=lambda x: x[1], reverse=True)[:5], 1):
+                    response.append(f"{i}. {location} ({count} projects)")
+                return "\n".join(response)
+                
+            # For cost queries, show the most expensive projects
+            elif any(term in query.lower() for term in ['cost', 'price', 'expensive', 'cheap']):
+                sorted_records = sorted(
+                    [r for r in records if 'contract_cost' in r],
+                    key=lambda x: float(str(x.get('contract_cost', 0).replace(',', '').replace('₱', '') or 0)),
+                    reverse=True
+                )[:5]
+                
+                response = ["Here are the most expensive projects I found:"]
+                for i, record in enumerate(sorted_records, 1):
+                    name = record.get('project_name', 'Unnamed Project')
+                    cost = record.get('contract_cost', 'N/A')
+                    response.append(f"{i}. {name} - {cost}")
+                return "\n".join(response)
+                
+            # Default response
+            return f"I found {len(records)} relevant projects. Here are some details:\n\n" + \
+                   "\n\n".join([f"• {r.get('project_name', 'Unnamed Project')} - {r.get('contractor', 'Unknown')}" for r in records[:5]])
+                   
+        except Exception as e:
+            print(f"Error in fallback response: {str(e)}")
+            return "I found some information but couldn't process it properly. Please try rephrasing your question."
+    
     def _classify_query(self, query: str) -> str:
         """Classify the type of question being asked."""
         query_lower = query.lower()
