@@ -1,9 +1,33 @@
+import logging
+import os
+import sys
+from pathlib import Path
+from http import HTTPStatus
+from flask import Flask, Response
+
+# Add the parent directory to the path so we can import from the project modules
+sys.path.append(str(Path(__file__).parent.absolute()))
+
 import os
 import re
 import logging
 import streamlit as st
 from data_handler import FloodControlDataHandler
 from llm_handler import LLMHandler
+
+# Set up logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Health check endpoint for Streamlit Cloud
+def health_check():
+    return Response("OK", status=HTTPStatus.OK)
+
+# This is needed for Streamlit Cloud's health checks
+if os.environ.get('STREAMLIT_SERVER_RUN_ON_UPDATE', '').lower() == 'true':
+    import flask
+    app = flask.Flask(__name__)
+    app.add_url_rule('/healthz', 'health_check', health_check)
 
 def load_dataset(handler=None, logger=None):
     """Try to load the dataset from common locations."""
