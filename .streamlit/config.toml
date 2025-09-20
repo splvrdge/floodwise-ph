@@ -1,29 +1,10 @@
-[global]
-developmentMode = false
-
 [server]
 headless = true
 port = 8501
 enableCORS = true
 enableXsrfProtection = true
 maxUploadSize = 200
-baseUrlPath = "/"
 fileWatcherType = "none"
-enableStaticServing = true
-enableWebsocketCompression = false
-
-# Simple health check using static file
-[server]
-healthCheckPath = "/healthz"
-
-[runner]
-magicEnabled = true
-installTracer = false
-fixMatplotlib = true
-
-[browser]
-gatherUsageStats = false
-serverAddress = "0.0.0.0"
 
 [theme]
 primaryColor = "#667eea"
@@ -32,9 +13,5 @@ secondaryBackgroundColor = "#f8f9fa"
 textColor = "#262730"
 font = "sans serif"
 
-[client]
-showErrorDetails = true
-
-[ui]
-hideTopBar = false
-hideSidebarNav = false
+[browser]
+gatherUsageStats = false

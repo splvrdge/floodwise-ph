@@ -5,7 +5,7 @@ import re
 import sys
 from typing import Any, Dict, List, Optional, Tuple, Union, Literal
 
-import httpx
+import openai
 import streamlit as st
 from enum import Enum
 from dotenv import load_dotenv
@@ -13,21 +13,17 @@ from dotenv import load_dotenv
 # Add the current directory to the path to import local modules
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-# Try to import Hugging Face handler
-try:
-    from hf_handler import HFModelHandler
-    HUGGINGFACE_AVAILABLE = True
-except ImportError:
-    HUGGINGFACE_AVAILABLE = False
-    logger = logging.getLogger(__name__)
-    logger.warning("Hugging Face models not available. Install with: pip install transformers torch")
+# Set up logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-# Try to import OpenAI
-OPENAI_AVAILABLE = False
+# Load environment variables
+load_dotenv()
+
+# Initialize OpenAI client
 try:
-    import openai
     OPENAI_AVAILABLE = True
-except ImportError:
+except Exception as e:
     logger = logging.getLogger(__name__)
     logger.warning("OpenAI not available. Install with: pip install openai")
 
@@ -51,79 +47,49 @@ class QueryType(Enum):
 class LLMHandler:
     """Handles LLM interactions for generating responses about flood control projects.
     
-    This class provides a unified interface for different LLM backends (OpenAI, Hugging Face, etc.)
-    with automatic fallback to available models.
+    This class provides an interface for OpenAI's API to generate responses.
     """
     
-    # Common greetings and small talk phrases
+    # Common greeting phrases that indicate a general conversation
     GENERAL_PHRASES = [
         "hi", "hello", "hey", "how are you", "what's up", "good morning", 
         "good afternoon", "good evening", "hi there", "hey there", "greetings"
     ]
     
-    # Keywords that indicate a flood control query
+    # Keywords that indicate a flood control-related query
     FLOOD_KEYWORDS = [
         "flood", "drainage", "control", "project", "contract", "cost",
         "location", "region", "province", "municipality", "contractor",
         "flood control", "flood mitigation", "drainage system"
     ]
     
-    def __init__(self, prefer_local: bool = False):
-        """Initialize the LLM handler.
+    def __init__(self, model_name: str = "gpt-3.5-turbo"):
+        """Initialize the LLM handler with the specified model.
         
         Args:
-            prefer_local: If True, will prefer local models even if OpenAI is available.
+            model_name: Name of the LLM model to use (default: gpt-3.5-turbo for free tier)
         """
+        self.model = model_name
         self.client = None
-        self.model = "gpt-3.5-turbo"  # Default model for OpenAI
-        # Using TinyLlama as it's lightweight and good for 1-2 users
-        self.hf_model = "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
-        self.prefer_local = prefer_local
-        self.model_type = None  # Will be 'openai', 'huggingface', or None
-        
-        # Try to initialize the preferred model
-        if not self.prefer_local and OPENAI_AVAILABLE:
-            self._initialize_client()
-        elif HUGGINGFACE_AVAILABLE:
-            self._initialize_hf_client()
-        else:
-            logger.warning("No LLM backend available. Install either OpenAI or Hugging Face models.")
-    
-    def _initialize_client(self):
-        """Initialize the OpenAI client."""
+        self.available = False
+        self.last_api_call = 0  # For rate limiting
+        self.min_seconds_between_calls = 2  # Rate limiting: max 30 requests per minute
+        self._initialize_client()
+        api_key = os.getenv("OPENAI_API_KEY")
+        if not api_key:
+            logger.warning("OpenAI API key not found. Please set OPENAI_API_KEY environment variable.")
+            self.client = None
+            self.model_type = None
+            return
+            
         try:
-            logger.info("Initializing OpenAI client...")
-            self.client = openai.ChatCompletion()
-            self.model_type = "openai"
+            self.client = openai.OpenAI(api_key=api_key)
             logger.info("OpenAI client initialized successfully")
         except Exception as e:
             logger.error(f"Failed to initialize OpenAI client: {e}")
             self.client = None
             self.model_type = None
-    
-    def _initialize_hf_client(self):
-        """Initialize the Hugging Face model client."""
-        try:
-            logger.info("Initializing Hugging Face model...")
-            # Only show loading spinner at the top level
-            with st.spinner("Loading AI model (this may take a minute)..."):
-                # Pass show_loading=False to prevent nested loading spinners
-                self.client = HFModelHandler(model_name=self.hf_model, show_loading=False)
-                if not self.client.is_available():
-                    raise Exception("Model failed to load properly")
-                self.model_type = "huggingface"
-                logger.info("Hugging Face model initialized successfully")
-        except Exception as e:
-            logger.error(f"Failed to initialize Hugging Face model: {e}")
-            self.client = None
-            self.model_type = None
-            st.error(f"Failed to load AI model: {str(e)}. Some features may be limited.")
-            if "CUDA out of memory" in str(e):
-                st.warning("Your system ran out of GPU memory. Try using a smaller model or running on CPU.")
-            elif "No space left on device" in str(e):
-                st.warning("Your system ran out of disk space. Please free up some space and try again.")
-            else:
-                st.warning("Please check your internet connection and try again later.")
+            st.error(f"Failed to initialize OpenAI client: {str(e)}. Some features may be limited.")
     
     def detect_query_type(self, query: str) -> str:
         """Detect the type of query to determine response format."""
@@ -1520,26 +1486,74 @@ sufficient information to fully answer the question, please indicate what inform
         return response
     
     def _generate_no_results_response(self, query: str) -> str:
-        """Generate helpful response when no results are found."""
-        return f"""## No Results Found
-
-I couldn't find any flood control projects matching your query: "{query}"
-
-### 💡 Try These Suggestions:
-- **Check spelling** of location names (e.g., "Cebu City", "Manila", "Davao")
-- **Use broader terms** (e.g., "drainage projects" instead of specific technical terms)
-- **Try different keywords** (e.g., "expensive projects", "recent completions")
-- **Include region names** (e.g., "Region VII", "NCR", "Mindanao")
-
-### 📋 Popular Search Examples:
-- "Most expensive projects in Cebu"
-- "Drainage projects completed in 2023"
-- "Top contractors in Region VII"
-- "Bridge projects in Manila"
-- "Recent flood control projects"
-
-*The database contains 9,800+ flood control projects across all Philippine regions.*
-"""
+        """Generate a helpful response when no results are found."""
+        return (f"I couldn't find any specific information about '{query}' in the flood control projects database. "
+                "You might want to try a different search term or ask about a specific aspect of flood control projects.")
+    
+    def _rate_limit(self):
+        """Enforce rate limiting between API calls."""
+        current_time = time.time()
+        time_since_last_call = current_time - self.last_api_call
+        
+        if time_since_last_call < self.min_seconds_between_calls:
+            time_to_wait = self.min_seconds_between_calls - time_since_last_call
+            time.sleep(time_to_wait)
+            
+        self.last_api_call = time.time()
+    
+    def generate_response(self, query: str, results: List[Dict[str, Any]]) -> str:
+        """Generate a response to the user query using the available LLM backend.
+        
+        Args:
+            query: The user's query
+            results: List of relevant records from the database
+            
+        Returns:
+            str: The generated response
+        """
+        if not self.is_available():
+            return self._fallback_response(query, results)
+            
+        try:
+            # Enforce rate limiting
+            self._rate_limit()
+            
+            # Detect query type
+            query_type = self.detect_query_type(query)
+            
+            # Get system prompt based on query type
+            system_prompt = self._get_system_prompt(query_type)
+            
+            # Prepare the prompt with query and context
+            prompt = self._prepare_prompt(query, results, None, query_type)
+            
+            # Generate response using OpenAI API with more conservative settings
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.7,  # Slightly lower temperature for more focused responses
+                max_tokens=500,   # Reduced from 1000 to save tokens
+                top_p=0.9,        # Controls diversity
+                frequency_penalty=0.2,  # Slightly reduce repetition
+                presence_penalty=0.2    # Slightly encourage new topics
+            )
+            
+            return response.choices[0].message.content.strip()
+                
+        except Exception as e:
+            error_msg = str(e).lower()
+            if "rate limit" in error_msg:
+                logger.warning("Rate limit reached. Please wait a moment before trying again.")
+                return "I'm getting a lot of requests right now. Please wait a moment and try again."
+            elif "authentication" in error_msg:
+                logger.error("Authentication failed. Please check your OpenAI API key.")
+                return "I'm having trouble authenticating with the AI service. Please check your API key."
+            else:
+                logger.error(f"Error generating response: {e}")
+                return self._fallback_response(query, results)
     
     def is_available(self) -> bool:
         """Check if LLM service is available."""

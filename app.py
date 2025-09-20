@@ -2,8 +2,6 @@ import logging
 import os
 import sys
 from pathlib import Path
-from http import HTTPStatus
-from flask import Flask, Response
 
 # Add the parent directory to the path so we can import from the project modules
 sys.path.append(str(Path(__file__).parent.absolute()))
@@ -16,19 +14,6 @@ from llm_handler import LLMHandler
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Create a simple Flask app for health checks
-app = Flask(__name__)
-
-@app.route('/healthz')
-def health_check():
-    """Health check endpoint for load balancers."""
-    return Response("OK", status=HTTPStatus.OK, content_type='text/plain')
-
-# Run the Flask app in a separate thread if this is the main module
-if __name__ == '__main__':
-    import threading
-    threading.Thread(target=app.run, kwargs={'host': '0.0.0.0', 'port': 8080}, daemon=True).start()
-
 def load_dataset(handler=None, logger=None):
     """Try to load the dataset from common locations."""
     if handler is None:
@@ -39,23 +24,51 @@ def load_dataset(handler=None, logger=None):
     
     if logger is None:
         logger = logging.getLogger(__name__)
-        
+    
+    # Check if we're running on Streamlit Cloud
+    is_streamlit_cloud = 'STREAMLIT_SERVER_RUNNING_REMOTELY' in os.environ
+    
+    # Define dataset paths to check
     dataset_paths = [
         "Dataset/flood-control-projects-table_2025-09-20.csv",
         "./Dataset/flood-control-projects-table_2025-09-20.csv",
         os.path.join(os.path.dirname(__file__), "Dataset", "flood-control-projects-table_2025-09-20.csv"),
     ]
     
+    # If running on Streamlit Cloud, try to load from the data directory first
+    if is_streamlit_cloud:
+        cloud_path = os.path.join(os.path.dirname(__file__), "data", "flood-control-projects-table_2025-09-20.csv")
+        if os.path.exists(cloud_path):
+            dataset_paths.insert(0, cloud_path)
+    
+    # Try each path
     for path in dataset_paths:
-        if os.path.exists(path):
-            try:
+        try:
+            if os.path.exists(path):
                 if handler.load_csv_from_path(path):
                     logger.info(f"Successfully loaded dataset from {path}")
                     st.session_state.data_loaded = True
                     return True
-            except Exception as e:
-                logger.error(f"Error loading dataset from {path}: {str(e)}")
-                continue
+        except Exception as e:
+            logger.error(f"Error loading dataset from {path}: {str(e)}")
+            continue
+    
+    # If we get here, no dataset was found
+    if is_streamlit_cloud:
+        st.error("""
+        ❌ Dataset not found in the expected location. Please ensure you've added the dataset file to the app.
+        
+        On Streamlit Cloud, you can upload your dataset file (flood-control-projects-table_2025-09-20.csv) 
+        to the `data/` directory in your repository.
+        """)
+    else:
+        st.error("""
+        ❌ Dataset not found. Please ensure the dataset file exists in one of these locations:
+        - Dataset/flood-control-projects-table_2025-09-20.csv
+        - ./Dataset/flood-control-projects-table_2025-09-20.csv
+        - data/flood-control-projects-table_2025-09-20.csv (for Streamlit Cloud)
+        """)
+    
     return False
 
 # Components
@@ -197,17 +210,86 @@ def initialize_handlers():
     # Set data_loaded flag if not exists
     if 'data_loaded' not in st.session_state:
         st.session_state.data_loaded = False
+    
+    # Show a warning about the free tier limitations
+    if 'show_free_tier_warning' not in st.session_state:
+        st.session_state.show_free_tier_warning = True
+    
+    if st.session_state.show_free_tier_warning:
+        with st.sidebar:
+            with st.expander("⚠️ Free Tier Notice", expanded=True):
+                st.warning("""
+                **Free Tier Limitations:**
+                - Using GPT-3.5-turbo model
+                - Limited to ~3 requests per minute
+                - Responses may be shorter to save tokens
+                - Some features may be rate-limited
+                
+                For full capabilities, consider upgrading your OpenAI account.
+                """)
+                if st.button("I understand", key="dismiss_warning"):
+                    st.session_state.show_free_tier_warning = False
+                    st.rerun()
         
     # Initialize LLM handler if not exists
     if 'llm_handler' not in st.session_state:
         try:
-            with st.spinner("Initializing AI model (this may take a minute)..."):
-                st.session_state.llm_handler = LLMHandler(prefer_local=True)
+            with st.spinner("Initializing AI model..."):
+                # Check for API key in multiple locations
+                api_key = None
+                
+                # 1. Check Streamlit secrets
+                if hasattr(st, 'secrets') and 'OPENAI_API_KEY' in st.secrets:
+                    api_key = st.secrets['OPENAI_API_KEY']
+                # 2. Check environment variables
+                elif 'OPENAI_API_KEY' in os.environ:
+                    api_key = os.environ['OPENAI_API_KEY']
+                # 3. Check .env file
+                else:
+                    try:
+                        from dotenv import load_dotenv
+                        load_dotenv()
+                        api_key = os.getenv('OPENAI_API_KEY')
+                    except:
+                        pass
+                
+                if not api_key:
+                    st.warning("""
+                    ⚠️ **OpenAI API Key Not Found**
+                    
+                    To use this app, you'll need an OpenAI API key. Here's how to get started:
+                    
+                    1. Sign up at [OpenAI](https://platform.openai.com/signup)
+                    2. Get your API key from the [API Keys](https://platform.openai.com/account/api-keys) page
+                    3. Add it to your Streamlit secrets or as an environment variable
+                    
+                    The app will use a limited fallback mode without the API key.
+                    """)
+                    st.session_state.llm_handler = None
+                    return
+                
+                # Set the API key in environment if not already set
+                if 'OPENAI_API_KEY' not in os.environ:
+                    os.environ['OPENAI_API_KEY'] = api_key
+                
+                # Initialize the LLM handler with gpt-3.5-turbo (free tier compatible)
+                st.session_state.llm_handler = LLMHandler(model_name="gpt-3.5-turbo")
+                
                 # Test if the model is available
-                if not hasattr(st.session_state.llm_handler, 'client') or not st.session_state.llm_handler.client:
-                    st.warning("AI model could not be loaded. Some features may be limited.")
+                if not st.session_state.llm_handler.is_available():
+                    st.warning("""
+                    ⚠️ **AI Model Not Available**
+                    
+                    The AI model couldn't be loaded. This might be because:
+                    - Your API key is invalid or has expired
+                    - You've exceeded your usage limits
+                    - There's a temporary issue with the API
+                    
+                    The app will use a limited fallback mode.
+                    """)
+                    
         except Exception as e:
-            st.error(f"Error initializing AI model: {str(e)}")
+            st.error(f"❌ Error initializing AI model: {str(e)}")
             st.session_state.llm_handler = None
     
     # Initialize chat history if not exists
@@ -266,13 +348,64 @@ def main():
         # Configure Streamlit first
         configure_streamlit()
         
-        # Set page config - MUST be the first Streamlit command
+        # Set page config
         st.set_page_config(
-            page_title="Flood Control Projects Assistant", 
+            page_title="FloodWise PH",
             page_icon="🌊",
             layout="wide",
             initial_sidebar_state="expanded"
         )
+        
+        # Add custom CSS for better mobile experience
+        st.markdown("""
+        <style>
+            /* Make the chat container more compact */
+            .stChatFloatingInputContainer {
+                max-width: 900px;
+                margin: 0 auto;
+            }
+            
+            /* Better spacing for mobile */
+            @media (max-width: 768px) {
+                .stChatFloatingInputContainer {
+                    padding: 10px;
+                }
+                
+                /* Hide the sidebar on mobile for more space */
+                section[data-testid="stSidebar"] {
+                    display: none;
+                }
+                
+                /* Make the main content full width on mobile */
+                .main .block-container {
+                    padding: 1rem;
+                }
+                
+                /* Better spacing for chat messages */
+                .stChatMessage {
+                    padding: 0.5rem;
+                }
+            }
+            
+            /* Style for warning messages */
+            .stAlert {
+                border-left: 4px solid #f4c430;
+                padding: 0.5rem 1rem;
+                margin: 1rem 0;
+                border-radius: 0.25rem;
+                background-color: rgba(244, 196, 48, 0.1);
+            }
+            
+            /* Style for error messages */
+            .stException {
+                border-left: 4px solid #ff4b4b;
+                padding: 0.5rem 1rem;
+                margin: 1rem 0;
+                border-radius: 0.25rem;
+                background-color: rgba(255, 75, 75, 0.1);
+            }
+        </style>
+        """, unsafe_allow_html=True)
         
         # Check system resources
         check_system_resources()

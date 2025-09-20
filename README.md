@@ -1,82 +1,92 @@
 # 🌊 FloodWise PH
 
-A web application that uses Large Language Models (LLM) to answer natural language questions about flood control projects in the Philippines. FloodWise PH comes pre-loaded with 9,856+ DPWH project records and provides intelligent responses about contractors, costs, locations, completion dates, and project types.
-
-**🚀 [Deploy to Streamlit Cloud](https://share.streamlit.io)** | **📖 [Deployment Guide](docs/STREAMLIT_DEPLOYMENT.md)**
+A web application that uses OpenAI's GPT models to answer natural language questions about flood control projects in the Philippines. The app comes pre-loaded with DPWH project records and provides intelligent responses about contractors, costs, locations, and project details.
 
 ## 🌟 Features
 
-- **Pre-loaded Dataset**: 9,856+ DPWH flood control projects ready to query
+- **Pre-loaded Dataset**: DPWH flood control projects ready to query
 - **Natural Language Queries**: Ask questions in plain English about the projects
-- **Intelligent Search**: TF-IDF based semantic search through project records
-- **LLM Integration**: OpenAI GPT integration for generating contextual responses
-- **📱 Mobile-Responsive Design**: Optimized for smartphones, tablets, and desktop
-- **Clean Interface**: Simple, user-friendly Streamlit interface
-- **Real-time Processing**: Dynamic responses generated from comprehensive dataset
-- **Data Exploration**: Advanced filtering and data exploration tools
-- **🚀 PWA Support**: Install as a mobile app for offline-like experience
-- **Touch-Friendly UI**: Optimized for touch interactions and mobile gestures
+- **OpenAI Integration**: Uses GPT models for generating contextual responses
+- **Mobile-Responsive Design**: Works well on both desktop and mobile devices
+- **Simple Interface**: User-friendly Streamlit interface
 
 ## 🚀 Quick Start
 
-### Option 1: Streamlit Cloud (Recommended)
+### Prerequisites
+- Python 3.9+
+- OpenAI API key
+- GitHub account (for deployment)
+
+### Option 1: Deploy to Streamlit Cloud (Recommended)
+
 1. **Fork this repository** to your GitHub account
-2. **Deploy to Streamlit Cloud**: [share.streamlit.io](https://share.streamlit.io)
-3. **Configure secrets**: Add your OpenAI API key in app settings
-4. **Start querying**: Dataset is automatically loaded - no upload needed!
+
+2. **Go to [Streamlit Cloud](https://share.streamlit.io/)** and sign in with your GitHub account
+
+3. **Click 'New app'** and select your forked repository
+
+4. **Configure your app**
+   - Branch: `main` (or your preferred branch)
+   - Main file path: `app.py`
+   - Python version: 3.9+
+
+5. **Set up secrets**
+   - Click 'Advanced settings...'
+   - Add your OpenAI API key:
+     ```
+     OPENAI_API_KEY=your_openai_api_key_here
+     ```
+
+6. **Deploy!**
+   - Click 'Deploy' and wait for the deployment to complete
+   - Your app will be available at `https://share.streamlit.io/your-username/your-repo-name`
 
 ### Option 2: Local Development
 
-#### Using the Improved Runner (Recommended)
-
-1. **Install dependencies**:
+1. **Clone the repository**
    ```bash
+   git clone <repository-url>
+   cd floodwise-ph
+   ```
+
+2. **Set up the environment**
+   ```bash
+   # Create and activate virtual environment
+   python -m venv venv
+   source venv/bin/activate  # On Windows: venv\Scripts\activate
+
+   # Install dependencies
    pip install -r requirements.txt
    ```
 
-2. **Run the application**:
-   ```bash
-   ./run_app.py
+3. **Set up environment variables**
+   - Copy `.env.example` to `.env`
+   - Add your OpenAI API key to `.env`
    ```
-   - The app will be available at `http://localhost:8501`
-   - Press `Ctrl+C` to stop the server
-
-   This method provides better process control and error handling.
-
-#### Using Conda (Alternative)
-1. **Create conda environment**
-   ```bash
-   cd "A1 - LLM"
-   conda env create -f environment.yml
-   ```
-
-2. **Activate environment**
-   ```bash
-   conda activate floodwise-ph
-   ```
-
-3. **Set up API key**
-   ```bash
-   cp .env.example .env
-   # Edit .env file and add your OpenAI API key
+   OPENAI_API_KEY=your_api_key_here
    ```
 
 4. **Run the application**
    ```bash
    streamlit run app.py
    ```
+   - The app will be available at `http://localhost:8501`
+   - Press `Ctrl+C` to stop the server
 
-5. **Open browser**: Navigate to `http://localhost:8501` - dataset loads automatically!
+## Example Queries
 
-#### Using pip
-1. **Install dependencies**
-   ```bash
-   pip install -r requirements.txt
-   ```
+- "Show me flood control projects in Metro Manila"
+- "What are the most expensive projects?"
+- "List projects by DPWH Region VII"
+- "Which contractors are working on flood mitigation?"
 
-2. **Set up environment and run** (same as steps 3-5 above)
+## Project Structure
 
-📖 **Detailed deployment instructions**: [docs/STREAMLIT_DEPLOYMENT.md](docs/STREAMLIT_DEPLOYMENT.md)
+- `app.py`: Main Streamlit application
+- `data_handler.py`: Handles data loading and processing
+- `llm_handler.py`: Manages interactions with OpenAI's API
+- `requirements.txt`: Python dependencies
+- `.env.example`: Example environment variables file
 
 ## 📊 CSV Data Format
 
