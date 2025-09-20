@@ -47,6 +47,17 @@ def sidebar():
         if 'data_loaded' not in st.session_state:
             st.session_state.data_loaded = False
             
+        # Check if LLM is available
+        if 'llm_handler' not in st.session_state or not st.session_state.llm_handler:
+            st.warning("AI model is not available. Some features may be limited.")
+            if st.button("Retry Loading AI Model"):
+                try:
+                    with st.spinner("Loading AI model..."):
+                        st.session_state.llm_handler = LLMHandler(prefer_local=True)
+                        st.rerun()
+                except Exception as e:
+                    st.error(f"Failed to load AI model: {str(e)}")
+            
         try:
             if st.session_state.data_loaded:
                 # Verify data_handler has data before calling get_summary_stats
@@ -158,18 +169,26 @@ def initialize_handlers():
     # Initialize data handler if not exists
     if 'data_handler' not in st.session_state:
         st.session_state.data_handler = FloodControlDataHandler()
-        
-    # Initialize LLM handler if not exists
-    if 'llm_handler' not in st.session_state:
-        st.session_state.llm_handler = LLMHandler(prefer_local=True)
-        
-    # Initialize chat history if not exists
-    if 'chat_history' not in st.session_state:
-        st.session_state.chat_history = []
-        
+    
     # Set data_loaded flag if not exists
     if 'data_loaded' not in st.session_state:
         st.session_state.data_loaded = False
+        
+    # Initialize LLM handler if not exists
+    if 'llm_handler' not in st.session_state:
+        try:
+            with st.spinner("Initializing AI model (this may take a minute)..."):
+                st.session_state.llm_handler = LLMHandler(prefer_local=True)
+                # Test if the model is available
+                if not hasattr(st.session_state.llm_handler, 'client') or not st.session_state.llm_handler.client:
+                    st.warning("AI model could not be loaded. Some features may be limited.")
+        except Exception as e:
+            st.error(f"Error initializing AI model: {str(e)}")
+            st.session_state.llm_handler = None
+    
+    # Initialize chat history if not exists
+    if 'chat_history' not in st.session_state:
+        st.session_state.chat_history = []
 
 def main():
     """Main application function."""

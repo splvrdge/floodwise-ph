@@ -105,13 +105,23 @@ class LLMHandler:
         """Initialize the Hugging Face model client."""
         try:
             logger.info("Initializing Hugging Face model...")
-            self.client = HFModelHandler(model_name=self.hf_model)
-            self.model_type = "huggingface"
-            logger.info("Hugging Face model initialized successfully")
+            with st.spinner("Loading AI model (this may take a minute)..."):
+                self.client = HFModelHandler(model_name=self.hf_model)
+                if not self.client.is_available():
+                    raise Exception("Model failed to load properly")
+                self.model_type = "huggingface"
+                logger.info("Hugging Face model initialized successfully")
         except Exception as e:
             logger.error(f"Failed to initialize Hugging Face model: {e}")
             self.client = None
             self.model_type = None
+            st.error(f"Failed to load AI model: {str(e)}. Some features may be limited.")
+            if "CUDA out of memory" in str(e):
+                st.warning("Your system ran out of GPU memory. Try using a smaller model or running on CPU.")
+            elif "No space left on device" in str(e):
+                st.warning("Your system ran out of disk space. Please free up some space and try again.")
+            else:
+                st.warning("Please check your internet connection and try again later.")
     
     def detect_query_type(self, query: str) -> str:
         """Detect the type of query to determine response format."""

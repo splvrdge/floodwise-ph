@@ -2,10 +2,40 @@ import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline
 from typing import List, Dict, Any, Optional
 import logging
+import streamlit as st
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+@st.cache_resource(show_spinner=False)
+def load_model(model_name: str, device: str):
+    """Load the model with caching to prevent reloading on reruns"""
+    logger.info(f"Loading model {model_name}...")
+    tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
+    model = AutoModelForCausalLM.from_pretrained(
+        model_name,
+        device_map="auto" if device == "cuda" else None,
+        torch_dtype=torch.bfloat16 if device == "cuda" else torch.float32,
+        trust_remote_code=True
+    )
+    
+    if device != "cuda":
+        model = model.to(device)
+    
+    # Create a text generation pipeline with TinyLlama-specific settings
+    pipe = pipeline(
+        "text-generation",
+        model=model,
+        tokenizer=tokenizer,
+        max_new_tokens=512,
+        temperature=0.7,
+        top_p=0.9,
+        repetition_penalty=1.1,
+        device=0 if device == "cuda" else -1
+    )
+    
+    return model, tokenizer, pipe
 
 class HFModelHandler:
     """Handler for Hugging Face language models."""
@@ -24,17 +54,31 @@ class HFModelHandler:
         self.model = None
         self.tokenizer = None
         self.pipeline = None
-        self._initialize_model()
+        
+        # Load model with caching
+        with st.spinner("Loading AI model (this may take a minute)..."):
+            try:
+                self.model, self.tokenizer, self.pipeline = load_model(self.model_name, self.device)
+            except Exception as e:
+                logger.error(f"Error loading model: {e}")
+                raise
     
-    def _initialize_model(self):
-        """Initialize the model and tokenizer."""
+    @st.cache_resource(show_spinner=False)
+    def load_model(self):
+        """Load the model with caching to prevent reloading on reruns"""
+        if self.model is None or self.tokenizer is None:
+            self._load_model_implementation()
+        return self.model, self.tokenizer
+        
+    def _load_model_implementation(self):
+        """Actual model loading implementation"""
         try:
             logger.info(f"Loading model {self.model_name}...")
-            self.tokenizer = AutoTokenizer.from_pretrained(self.model_name)
+            self.tokenizer = AutoTokenizer.from_pretrained(self.model_name, trust_remote_code=True)
             self.model = AutoModelForCausalLM.from_pretrained(
                 self.model_name,
-                torch_dtype=torch.bfloat16 if self.device == "cuda" else torch.float32,
                 device_map="auto" if self.device == "cuda" else None,
+                torch_dtype=torch.bfloat16 if self.device == "cuda" else torch.float32,
                 trust_remote_code=True
             )
             
