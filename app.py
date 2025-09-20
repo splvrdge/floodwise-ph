@@ -1,5 +1,7 @@
-import streamlit as st
 import os
+import re
+import traceback
+import streamlit as st
 from data_handler import FloodControlDataHandler
 from llm_handler import LLMHandler
 from mobile_utils import optimize_for_mobile
@@ -131,7 +133,6 @@ def chat_ui():
         with st.spinner("Processing..."):
             try:
                 # Parse the query for number of results requested
-                import re
                 num_match = re.search(r'(?:show|list|top|first|get)\s+(?:me\s+)?(\d+)(?:\s+results?)?', query, re.IGNORECASE)
                 top_k = 10  # Default number of results
                 
@@ -158,7 +159,6 @@ def chat_ui():
                 st.rerun()
                 
             except Exception as e:
-                import traceback
                 error_details = traceback.format_exc()
                 print(f"Error in chat_ui: {error_details}")
                 st.session_state.chat_history.append((query, f"I'm sorry, I encountered an error: {str(e)}\n\nPlease try rephrasing your question or try again later."))

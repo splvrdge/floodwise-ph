@@ -1,9 +1,19 @@
-import openai
+import json
+import logging
 import os
 from typing import List, Dict, Any, Optional
+
+import httpx
+import openai
 import streamlit as st
 from dotenv import load_dotenv
-import json
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
 # Load environment variables
 load_dotenv()
@@ -37,7 +47,10 @@ class LLMHandler:
             else:
                 pass  # st.warning("⚠️ Streamlit secrets not available")  # Commented out
         except Exception as e:
-            pass  # st.error(f"Error accessing Streamlit secrets: {str(e)}")  # Commented out
+            # Log error but continue with other initialization methods
+            logger.warning(f"Error accessing Streamlit secrets: {str(e)}")
+            if st.session_state.get('debug_mode', False):
+                st.warning("Debug: Could not access Streamlit secrets")
         
         # Fallback to environment variables if no API key found
         if not api_key:
@@ -64,16 +77,17 @@ class LLMHandler:
                     continue
             
             # If all strategies fail
-            # st.error("⚠️ All OpenAI initialization strategies failed")  # Commented out
-            # st.info("The app will continue with basic functionality (no AI responses)")  # Commented out
+            logger.warning("All OpenAI initialization strategies failed")
+            if st.session_state.get('debug_mode', False):
+                st.warning("Debug: All OpenAI initialization strategies failed. Running in basic mode.")
             self.client = None
         else:
-            pass  # st.error("⚠️ No OpenAI API key found in secrets or environment")  # Commented out
+            logger.warning("No OpenAI API key found in secrets or environment")
+            if st.session_state.get('debug_mode', False):
+                st.warning("Debug: No OpenAI API key found. Running in basic mode.")
     
     def _init_with_custom_http_client(self, api_key: str):
         """Initialize with custom HTTP client to avoid proxies issue."""
-        import httpx
-        
         # Create custom HTTP client without problematic parameters
         http_client = httpx.Client(
             timeout=httpx.Timeout(30.0),

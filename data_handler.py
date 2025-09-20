@@ -1,10 +1,34 @@
+import logging
 import re
-import pandas as pd
+import traceback
+from datetime import datetime
+from typing import List, Dict, Any, Optional, Tuple, Union
+
 import numpy as np
-from typing import List, Dict, Any, Optional
+import pandas as pd
+import streamlit as st
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
-import streamlit as st
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
+# For fuzzy string matching
+try:
+    from fuzzywuzzy import fuzz
+except ImportError:
+    logger.warning("fuzzywuzzy not found. Using simple string matching instead.")
+    # Fallback to a simple string matching if fuzzywuzzy is not available
+    class SimpleFuzz:
+        @staticmethod
+        def token_sort_ratio(a, b):
+            return 100 if a.lower() == b.lower() else 0
+    
+    fuzz = SimpleFuzz()
 
 class FloodControlDataHandler:
     """Handles CSV data loading, processing, and querying for flood control projects."""
@@ -215,7 +239,6 @@ class FloodControlDataHandler:
             
         except Exception as e:
             st.error(f"Error processing data from {source_description}: {str(e)}")
-            import traceback
             st.error(traceback.format_exc())
             return False
             
@@ -255,8 +278,8 @@ class FloodControlDataHandler:
         This method implements a multi-stage search strategy:
         1. Parse the query for location, year, and other filters
         2. Apply filters to narrow down the dataset
-        3. Classify the query type
-        4. Route to appropriate handler for final results
+        3. Use TF-IDF for semantic search if needed
+        4. Fall back to simple text matching if necessary
         
         Args:
             query: The search query
@@ -264,126 +287,104 @@ class FloodControlDataHandler:
             
         Returns:
             List of matching records as dictionaries
+            
+        Raises:
+            ValueError: If no data is available
         """
-        if self.df is None or self.vectorizer is None or not query.strip():
-            return []
-            
         try:
-            # Parse the query for number of results requested
-            import re
-            num_match = re.search(
-                r'(?:show|list|top|first|get)\s+(?:me\s+)?(\d+)(?:\s+results?)?', 
-                query, 
-                re.IGNORECASE
-            )
-            if num_match:
-                try:
-                    top_k = min(int(num_match.group(1)), 50)  # Cap at 50 results for performance
-                except (ValueError, IndexError):
-                    pass
-            
-            query_lower = query.lower()
-            
-            # Extract location and year information from the query
-            location = self._extract_location(query_lower)
-            year = self._extract_year(query_lower)
-            date_range = self._extract_years(query_lower)
-            
-            # If we have a date range but not a specific year, use the date range
-            if date_range[0] is not None and year is None:
-                year = date_range[0]  # For backward compatibility
-            
-            # Start with the full dataset
-            filtered_df = self.df.copy()
-            
-            # Apply location filter if specified
-            if location:
-                location_filtered = self._filter_by_location(filtered_df, location)
-                if not location_filtered.empty:
-                    filtered_df = location_filtered
-            
-            # Apply year/date range filter if specified
-            if date_range[0] is not None or year is not None:
-                year_filtered = self._filter_by_year(
-                    filtered_df, 
-                    year=year, 
-                    date_range=date_range if date_range[0] is not None else None
-                )
-                if not year_filtered.empty:
-                    filtered_df = year_filtered
-            
-            # If no results after filtering, try relaxing the filters one by one
-            if filtered_df.empty:
-                # Try with just location
-                if location:
-                    location_filtered = self._filter_by_location(self.df, location)
-                    if not location_filtered.empty:
-                        filtered_df = location_filtered
+            # Input validation
+            if not hasattr(self, 'df') or self.df is None or self.df.empty:
+                error_msg = "No data available. Please load the dataset first."
+                logger.error(error_msg)
+                if st.session_state.get('debug_mode', False):
+                    st.error(error_msg)
+                return []
                 
-                # If still no results, try with just year/date range
-                if filtered_df.empty and (date_range[0] is not None or year is not None):
-                    year_filtered = self._filter_by_year(
-                        self.df,
-                        year=year,
-                        date_range=date_range if date_range[0] is not None else None
-                    )
-                    if not year_filtered.empty:
-                        filtered_df = year_filtered
+            if not query or not isinstance(query, str) or not query.strip():
+                logger.warning("Empty or invalid query provided")
+                return []
                 
-                # If still no results, try semantic search on the full dataset
-                if filtered_df.empty:
-                    print("No results found with filters, falling back to semantic search")
-                    return self._semantic_search(self.df, query, top_k)
+            logger.info(f"Processing search query: {query}")
             
-            # Classify the query type based on the filtered results
-            query_type = self._classify_query(query_lower)
+            # Initialize working dataframe
+            working_df = self.df.copy()
             
-            # Route to appropriate handler based on query type
-            handler_map = {
-                'cost_analysis': self._handle_cost_queries,
-                'contractor_analysis': self._handle_contractor_queries,
-                'completion_analysis': self._handle_completion_queries,
-                'project_type_analysis': self._handle_project_type_queries,
-                'location_analysis': self._handle_location_queries,
-                'comparison': self._handle_comparison_queries,
-                'metadata_analysis': self._handle_metadata_queries,
-                'analysis_insights': self._handle_analysis_queries
-            }
-            
-            # Get the appropriate handler function
-            handler = handler_map.get(query_type, self._semantic_search)
-            
+            # Extract location and year information
             try:
-                # Try the primary handler first
-                results = handler(filtered_df, query, top_k)
+                location_terms = self._extract_location_terms(query)
+                year, date_range = self._extract_years(query)
                 
-                # If no results from the handler, try semantic search as fallback
-                if not results and query_type != 'general':
-                    print(f"No results from {query_type} handler, falling back to semantic search")
-                    results = self._semantic_search(filtered_df, query, top_k)
+                logger.debug(f"Extracted location terms: {location_terms}")
+                logger.debug(f"Extracted year: {year}, date range: {date_range}")
                 
-                # If we still have no results, try relaxing all filters
-                if not results and (location or year is not None or date_range[0] is not None):
-                    print("No results with current filters, trying without filters")
-                    return self._semantic_search(self.df, query, top_k)
-                
-                return results
-                
+                # Apply location filter if terms were found
+                if location_terms:
+                    working_df = self._filter_by_location(working_df, location_terms)
+                    logger.debug(f"After location filter: {len(working_df)} records")
+                    
+                # Apply year/date filter if specified
+                if year is not None or (date_range and any(date_range)):
+                    working_df = self._filter_by_year(working_df, year, date_range)
+                    logger.debug(f"After year filter: {len(working_df)} records")
+                    
             except Exception as e:
-                print(f"Error in {query_type} handler: {str(e)}")
-                print("Falling back to semantic search")
-                return self._semantic_search(filtered_df, query, top_k)
+                error_msg = f"Error applying filters: {str(e)}"
+                logger.error(error_msg, exc_info=True)
+                if st.session_state.get('debug_mode', False):
+                    st.warning(f"Warning: {error_msg}")
+                # Continue with unfiltered results if there's an error in filtering
+                working_df = self.df.copy()
+            
+            # If no results after filtering, try a broader search
+            if len(working_df) == 0:
+                logger.info("No matching records found after filtering, trying broader search")
+                working_df = self.df.copy()
+                
+            # If we still have too many results, use TF-IDF to find the most relevant ones
+            if len(working_df) > top_k:
+                try:
+                    # Combine text columns for TF-IDF
+                    text_columns = [col for col in ['ProjectName', 'ProjectDescription', 'Location', 'Contractor'] 
+                                  if col in working_df.columns]
+                    
+                    if text_columns:
+                        working_df['combined_text'] = working_df[text_columns].fillna('').apply(
+                            lambda x: ' '.join(x.astype(str)), axis=1
+                        )
+                        
+                        # Create TF-IDF vectors
+                        vectorizer = TfidfVectorizer(stop_words='english')
+                        tfidf_matrix = vectorizer.fit_transform(working_df['combined_text'])
+                        query_vec = vectorizer.transform([query])
+                        
+                        # Calculate cosine similarity
+                        cosine_similarities = cosine_similarity(query_vec, tfidf_matrix).flatten()
+                        
+                        # Get top-k most similar documents
+                        top_indices = cosine_similarities.argsort()[-top_k:][::-1]
+                        working_df = working_df.iloc[top_indices]
+                        
+                        logger.debug(f"Applied TF-IDF ranking, top {len(working_df)} results")
+                    
+                except Exception as e:
+                    error_msg = f"Error in TF-IDF processing: {str(e)}"
+                    logger.warning(error_msg, exc_info=True)
+                    if st.session_state.get('debug_mode', False):
+                        st.warning(f"Debug: {error_msg}")
+                    # Fall back to simple text matching
+                    working_df = working_df.head(top_k)
+            
+            # Convert results to list of dictionaries
+            results = working_df.head(top_k).to_dict('records')
+            logger.info(f"Returning {len(results)} results")
+            return results
             
         except Exception as e:
-            print(f"Error in search_relevant_records: {str(e)}")
-            import traceback
-            print(traceback.format_exc())
-            
-            # As a last resort, try a simple semantic search
-            try:
-                return self._semantic_search(self.df, query, top_k)
-            except Exception as e2:
-                print(f"Error in fallback semantic search: {str(e2)}")
+            error_msg = f"Unexpected error in search_relevant_records: {str(e)}"
+            logger.error(error_msg, exc_info=True)
+            if st.session_state.get('debug_mode', False):
+                st.error(f"Error: {error_msg}")
+            return []
                 return []
     
     def _extract_location(self, query: str) -> str:
@@ -425,7 +426,6 @@ class FloodControlDataHandler:
     
     def _extract_year(self, query: str) -> int:
         """Extract year mentions from query."""
-        import re
         years = re.findall(r'\b(20[0-9]{2})\b', query)
         return int(years[0]) if years else None
     
@@ -606,8 +606,6 @@ class FloodControlDataHandler:
             tuple: (start_year, end_year) - If a single year, both will be the same.
                    Returns (None, None) if no year is found.
         """
-        import re
-        
         # Look for year ranges (e.g., 2020-2023, 2020 to 2023)
         range_patterns = [
             r'(\d{4})\s*[-–]\s*(\d{4})',  # 2020-2023 or 2020 - 2023
@@ -1125,7 +1123,6 @@ class FloodControlDataHandler:
             r'compare\s+(.+?)\s+(?:and|with)\s+(.+?)(?:\s|$)'
         ]
         
-        import re
         for pattern in comparison_patterns:
             match = re.search(pattern, query)
             if match:
