@@ -83,7 +83,8 @@ def main():
             st.write(f"**Model:** {model_info['model']}")
         else:
             st.warning("⚠️ AI Model Not Configured")
-            st.info("Add your OpenAI API key to .env file for enhanced responses")
+            st.info("**Streamlit Cloud**: Add API key to app secrets")
+            st.info("**Local Dev**: Add API key to .env file")
     
     # Main chat interface
     if not st.session_state.data_loaded:

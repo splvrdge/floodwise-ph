@@ -1,8 +1,8 @@
-streamlit==1.37.0
-pandas==2.2.2
-openai==1.40.0
-httpx>=0.25.0,<1.0.0
-python-dotenv==1.0.1
-numpy==1.26.4
-scikit-learn==1.5.1
-sentence-transformers==3.0.1
+streamlit==1.49.0
+pandas==2.3.2
+openai==1.108.0
+httpx==0.28.1
+python-dotenv==1.1.1
+numpy==2.3.3
+scikit-learn==1.7.2
+sentence-transformers==5.1.0

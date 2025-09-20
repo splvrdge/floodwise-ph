@@ -36,7 +36,9 @@ class LLMHandler:
                 st.info("The app will continue to work with basic functionality (no AI responses).")
                 self.client = None
         else:
-            st.warning("⚠️ OpenAI API key not found. Please set OPENAI_API_KEY in Streamlit secrets or .env file.")
+            st.warning("⚠️ OpenAI API key not found.")
+            st.info("💡 **For Streamlit Cloud**: Add OPENAI_API_KEY to app secrets in your Streamlit dashboard")
+            st.info("💡 **For Local Development**: Add OPENAI_API_KEY to your .env file")
     
     def generate_response(self, query: str, relevant_records: List[Dict[str, Any]], 
                          context_info: Dict[str, Any] = None) -> str:
