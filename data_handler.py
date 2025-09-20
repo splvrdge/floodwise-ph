@@ -116,6 +116,10 @@ class FloodControlDataHandler:
                 return self._handle_location_queries(filtered_df, query_lower, top_k)
             elif query_type == 'comparison':
                 return self._handle_comparison_queries(filtered_df, query_lower, top_k)
+            elif query_type == 'metadata_analysis':
+                return self._handle_metadata_queries(filtered_df, query_lower, top_k)
+            elif query_type == 'analysis_insights':
+                return self._handle_analysis_queries(filtered_df, query_lower, top_k)
             else:
                 # Default semantic search
                 return self._semantic_search(filtered_df, query, top_k)
@@ -210,29 +214,68 @@ class FloodControlDataHandler:
     
     def _classify_query(self, query: str) -> str:
         """Classify the type of query to determine processing approach."""
-        # Cost-related queries
-        if any(term in query for term in ['expensive', 'cost', 'budget', 'price', 'amount', 'million', 'billion', 'cheapest', 'affordable']):
-            return 'cost_analysis'
+        # Metadata/system queries (highest priority)
+        if any(term in query for term in ['how many total', 'total projects', 'dataset', 'unique values', 'missing data', 'columns', 'fields']):
+            return 'metadata_analysis'
         
-        # Contractor-related queries  
-        elif any(term in query for term in ['contractor', 'company', 'builder', 'construction', 'who built', 'who constructed', 'top contractor', 'most projects']):
+        # Analysis/insights queries (high priority)  
+        if any(term in query for term in ['distribution', 'trend', 'growth', 'statistics', 'insights']):
+            return 'analysis_insights'
+        
+        # Contractor-related queries (check first for priority)
+        contractor_terms = [
+            'contractor', 'company', 'builder', 'construction', 'who built', 
+            'who constructed', 'top contractor', 'most projects', 'which contractor',
+            'built by', 'constructed by', 'developer', 'firm'
+        ]
+        if any(term in query for term in contractor_terms):
             return 'contractor_analysis'
         
-        # Time/completion-related queries
-        elif any(term in query for term in ['completed', 'finished', 'done', 'completion', 'when', 'recent', 'latest', 'oldest', 'first']):
+        # Cost-related queries (expanded patterns)
+        cost_terms = [
+            'expensive', 'cost', 'budget', 'price', 'amount', 'million', 'billion', 
+            'cheapest', 'affordable', 'average', 'spending', 'investment',
+            'least', 'lowest', 'smallest', 'minimum', 'maximum', 'highest', 'most',
+            'low budget', 'high budget', 'low cost', 'high cost'
+        ]
+        if any(term in query for term in cost_terms):
+            return 'cost_analysis'
+        
+        # Time/completion-related queries (expanded patterns)
+        time_terms = [
+            'completed', 'finished', 'done', 'completion', 'when', 'recent', 
+            'latest', 'oldest', 'first', 'last', 'year', 'date', 'timeline',
+            'started', 'began', 'ongoing', 'in progress'
+        ]
+        if any(term in query for term in time_terms):
             return 'completion_analysis'
         
-        # Project type queries
-        elif any(term in query for term in ['type', 'kind', 'drainage', 'bridge', 'seawall', 'revetment', 'mitigation', 'flood control', 'pumping', 'embankment']):
+        # Project type queries (expanded patterns)
+        type_terms = [
+            'type', 'kind', 'drainage', 'bridge', 'seawall', 'revetment', 
+            'mitigation', 'flood control', 'pumping', 'embankment', 'dike',
+            'canal', 'culvert', 'slope protection', 'river control'
+        ]
+        if any(term in query for term in type_terms):
             return 'project_type_analysis'
         
-        # Location-based queries (including count and investment analysis)
-        elif any(term in query for term in ['where', 'location', 'region', 'province', 'city', 'municipality', 'how many', 'count', 'number of', 'investment', 'total cost']):
+        # Location-based queries (expanded patterns)
+        location_terms = [
+            'where', 'location', 'region', 'province', 'city', 'municipality', 
+            'how many', 'count', 'number of', 'investment', 'total cost',
+            'in', 'at', 'near', 'around', 'barangay', 'area'
+        ]
+        if any(term in query for term in location_terms):
             return 'location_analysis'
         
-        # Comparison queries
-        elif any(term in query for term in ['compare', 'vs', 'versus', 'difference', 'between', 'comparison']):
+        # Comparison queries (expanded patterns)
+        comparison_terms = [
+            'compare', 'vs', 'versus', 'difference', 'between', 'comparison',
+            'better', 'worse', 'more than', 'less than', 'against'
+        ]
+        if any(term in query for term in comparison_terms):
             return 'comparison'
+        
         
         # Default to general search
         else:
@@ -254,14 +297,34 @@ class FloodControlDataHandler:
             # Fallback to all records if no cost data
             cost_df = df
         
-        if 'expensive' in query or 'highest' in query:
-            # Sort by contract cost descending
-            sorted_df = cost_df.sort_values('ContractCost', ascending=False)
-        elif 'cheapest' in query or 'lowest' in query:
-            # Sort by contract cost ascending
+        # Check if this is an average/summary query
+        if any(term in query for term in ['average', 'total', 'summary', 'spending']):
+            # Return all records for summary analysis, but mark as summary type
+            result_records = self._convert_to_records(cost_df.head(top_k), 1.0)
+            
+            # Add summary statistics to the first record
+            if result_records:
+                total_cost = cost_df['ContractCost'].sum()
+                avg_cost = cost_df['ContractCost'].mean()
+                project_count = len(cost_df)
+                
+                # Add summary info to all records
+                for record in result_records:
+                    record['total_investment'] = total_cost
+                    record['average_cost'] = avg_cost
+                    record['project_count'] = project_count
+                    record['query_type'] = 'cost_summary'
+            
+            return result_records
+        
+        elif any(term in query for term in ['cheapest', 'lowest', 'least', 'smallest', 'minimum', 'low budget', 'low cost']):
+            # Sort by contract cost ascending (cheapest first)
             sorted_df = cost_df.sort_values('ContractCost', ascending=True)
+        elif any(term in query for term in ['expensive', 'highest', 'most', 'largest', 'maximum', 'high budget', 'high cost']):
+            # Sort by contract cost descending (most expensive first)
+            sorted_df = cost_df.sort_values('ContractCost', ascending=False)
         else:
-            # Default to expensive
+            # Default to expensive for general cost queries
             sorted_df = cost_df.sort_values('ContractCost', ascending=False)
         
         return self._convert_to_records(sorted_df.head(top_k), 1.0)
@@ -299,24 +362,28 @@ class FloodControlDataHandler:
         if completion_df.empty:
             completion_df = df  # Fallback to all records
         
-        if 'recent' in query or 'latest' in query or '2024' in query or '2023' in query:
+        # Enhanced pattern matching for completion queries
+        recent_terms = ['recent', 'latest', 'new', 'current', '2024', '2023', '2022']
+        old_terms = ['oldest', 'first', 'early', 'initial', '2021', '2020', '2019']
+        
+        if any(term in query for term in recent_terms):
             # Sort by completion date descending (most recent first)
             if 'CompletionDateActual' in completion_df.columns:
                 sorted_df = completion_df.sort_values(['CompletionYear', 'CompletionDateActual'], 
-                                                    ascending=[False, False], )
+                                                    ascending=[False, False])
             else:
-                sorted_df = completion_df.sort_values('CompletionYear', ascending=False, )
-        elif 'oldest' in query or 'first' in query or 'early' in query:
+                sorted_df = completion_df.sort_values('CompletionYear', ascending=False)
+        elif any(term in query for term in old_terms):
             # Sort by completion date ascending (oldest first)
             if 'CompletionDateActual' in completion_df.columns:
                 sorted_df = completion_df.sort_values(['CompletionYear', 'CompletionDateActual'], 
-                                                    ascending=[True, True], )
+                                                    ascending=[True, True])
             else:
-                sorted_df = completion_df.sort_values('CompletionYear', ascending=True, )
+                sorted_df = completion_df.sort_values('CompletionYear', ascending=True)
         else:
             # Default to recent, but also consider cost for relevance
             sorted_df = completion_df.sort_values(['CompletionYear', 'ContractCost'], 
-                                                ascending=[False, False], )
+                                                ascending=[False, False])
         
         return self._convert_to_records(sorted_df.head(top_k), 1.0)
     
@@ -592,24 +659,79 @@ class FloodControlDataHandler:
             records.append(record)
         return records
     
+    def _handle_metadata_queries(self, df: pd.DataFrame, query: str, top_k: int) -> List[Dict[str, Any]]:
+        """Handle metadata and system information queries."""
+        if df.empty:
+            return []
+        
+        # Create a metadata summary record
+        metadata_info = {
+            'query_type': 'metadata',
+            'total_projects': len(df),
+            'total_columns': len(df.columns),
+            'columns_list': list(df.columns),
+            'unique_regions': df['Region'].nunique() if 'Region' in df.columns else 0,
+            'unique_provinces': df['Province'].nunique() if 'Province' in df.columns else 0,
+            'unique_municipalities': df['Municipality'].nunique() if 'Municipality' in df.columns else 0,
+            'unique_contractors': df['Contractor'].nunique() if 'Contractor' in df.columns else 0,
+            'date_range_start': df['InfraYear'].min() if 'InfraYear' in df.columns else None,
+            'date_range_end': df['InfraYear'].max() if 'InfraYear' in df.columns else None,
+            'missing_data_summary': df.isnull().sum().to_dict(),
+            'similarity_score': 1.0
+        }
+        
+        # Add specific query responses
+        if 'unique values' in query:
+            if 'infra_type' in query:
+                metadata_info['unique_infra_types'] = df['infra_type'].unique().tolist() if 'infra_type' in df.columns else []
+            elif 'contractor' in query:
+                metadata_info['unique_contractors_list'] = df['Contractor'].unique().tolist() if 'Contractor' in df.columns else []
+        
+        return [metadata_info]
+    
+    def _handle_analysis_queries(self, df: pd.DataFrame, query: str, top_k: int) -> List[Dict[str, Any]]:
+        """Handle analysis and insights queries."""
+        if df.empty:
+            return []
+        
+        # Create analysis summary
+        analysis_info = {
+            'query_type': 'analysis',
+            'similarity_score': 1.0
+        }
+        
+        # Distribution analysis
+        if 'distribution' in query:
+            if 'region' in query:
+                analysis_info['region_distribution'] = df['Region'].value_counts().to_dict()
+            elif 'province' in query:
+                analysis_info['province_distribution'] = df['Province'].value_counts().head(10).to_dict()
+            elif 'year' in query:
+                analysis_info['year_distribution'] = df['CompletionYear'].value_counts().sort_index().to_dict()
+        
+        # Trend analysis
+        if 'trend' in query and 'funding' in query:
+            if 'ContractCost' in df.columns and 'InfraYear' in df.columns:
+                yearly_funding = df.groupby('InfraYear')['ContractCost'].sum().to_dict()
+                analysis_info['funding_trend'] = yearly_funding
+        
+        # Top analysis
+        if 'top' in query:
+            if 'expensive' in query:
+                top_projects = df.nlargest(5, 'ContractCost')[['ProjectDescription', 'ContractCost', 'Municipality', 'Province']].to_dict('records')
+                analysis_info['top_expensive_projects'] = top_projects
+            elif 'contractor' in query:
+                top_contractors = df['Contractor'].value_counts().head(5).to_dict()
+                analysis_info['top_contractors'] = top_contractors
+        
+        return [analysis_info]
+    
     def get_column_info(self) -> Dict[str, List[str]]:
         """Get information about available columns and sample values."""
         if self.df is None:
             return {}
         
         column_info = {}
-        for col in self.df.columns:
-            # Get unique values (limited to first 10 for display)
-            unique_vals = self.df[col].dropna().unique()[:10]
-            column_info[col] = [str(val) for val in unique_vals]
-        
-        return column_info
-    
-    def get_summary_stats(self) -> Dict[str, Any]:
-        """Get summary statistics of the dataset."""
-        if self.df is None:
-            return {}
-        
         return {
             'total_records': len(self.df),
             'columns': list(self.df.columns),

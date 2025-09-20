@@ -208,6 +208,10 @@ sufficient information to fully answer the question, please indicate what inform
             return self._format_location_response(query, relevant_records)
         elif query_type == 'comparison':
             return self._format_comparison_response(query, relevant_records)
+        elif query_type == 'metadata_analysis':
+            return self._format_metadata_response(query, relevant_records)
+        elif query_type == 'analysis_insights':
+            return self._format_analysis_response(query, relevant_records)
         else:
             return self._format_general_response(query, relevant_records)
     
@@ -230,10 +234,14 @@ sufficient information to fully answer the question, please indicate what inform
         """Format response for cost-related queries."""
         response_parts = []
         
-        if 'expensive' in query.lower():
-            response_parts.append("# 💰 Most Expensive Flood Control Projects")
-        elif 'cheapest' in query.lower():
+        # Check if this is a cost summary query
+        if records and records[0].get('query_type') == 'cost_summary':
+            return self._format_cost_summary_response(query, records)
+        
+        if any(term in query.lower() for term in ['cheapest', 'lowest', 'least', 'smallest', 'minimum', 'low budget', 'low cost']):
             response_parts.append("# 💰 Most Affordable Flood Control Projects")
+        elif any(term in query.lower() for term in ['expensive', 'highest', 'most', 'largest', 'maximum', 'high budget', 'high cost']):
+            response_parts.append("# 💰 Most Expensive Flood Control Projects")
         else:
             response_parts.append("# 💰 Flood Control Projects by Cost")
         
@@ -264,6 +272,51 @@ sufficient information to fully answer the question, please indicate what inform
             response_parts.append(f"**🏗️ Contractor:** {record.get('Contractor', 'N/A')}")
             response_parts.append(f"**📅 Completion Year:** {record.get('CompletionYear', 'N/A')}")
             response_parts.append("")
+        
+        return "\n".join(response_parts)
+    
+    def _format_cost_summary_response(self, query: str, records: List[Dict[str, Any]]) -> str:
+        """Format response for cost summary queries (average, total, etc.)."""
+        if not records:
+            return "No cost data available."
+        
+        # Get summary statistics from the first record
+        first_record = records[0]
+        total_investment = first_record.get('total_investment', 0)
+        average_cost = first_record.get('average_cost', 0)
+        project_count = first_record.get('project_count', 0)
+        
+        response_parts = []
+        
+        if 'average' in query.lower():
+            response_parts.append("# 📊 Average Spending Analysis")
+        elif 'total' in query.lower():
+            response_parts.append("# 💰 Total Investment Analysis")
+        else:
+            response_parts.append("# 📈 Cost Summary Analysis")
+        
+        response_parts.append("")
+        response_parts.append("## 📊 Summary Statistics")
+        response_parts.append(f"**💰 Total Investment:** ₱{total_investment:,.2f}")
+        response_parts.append(f"**📈 Average Cost per Project:** ₱{average_cost:,.2f}")
+        response_parts.append(f"**📊 Number of Projects:** {project_count}")
+        response_parts.append("")
+        
+        # Show sample projects
+        response_parts.append("## 🏗️ Sample Projects")
+        for i, record in enumerate(records[:3], 1):
+            cost = float(record.get('ContractCost', 0))
+            cost_vs_avg = ((cost - average_cost) / average_cost * 100) if average_cost > 0 else 0
+            
+            response_parts.append(f"### {i}. {record.get('ProjectDescription', 'Unknown Project')}")
+            response_parts.append(f"**📍 Location:** {record.get('Municipality', 'N/A')}, {record.get('Province', 'N/A')}")
+            response_parts.append(f"**💰 Contract Cost:** ₱{cost:,.2f} ({cost_vs_avg:+.1f}% vs average)")
+            response_parts.append(f"**🏗️ Contractor:** {record.get('Contractor', 'N/A')}")
+            response_parts.append(f"**📅 Completion Year:** {record.get('CompletionYear', 'N/A')}")
+            response_parts.append("")
+        
+        if len(records) > 3:
+            response_parts.append(f"*Showing 3 sample projects out of {project_count} total projects.*")
         
         return "\n".join(response_parts)
     
@@ -525,6 +578,173 @@ sufficient information to fully answer the question, please indicate what inform
         
         if len(records) > 5:
             response_parts.append(f"*Showing top 5 results out of {len(records)} found.*")
+            response_parts.append("")
+        
+        return "\n".join(response_parts)
+    
+    def _format_metadata_response(self, query: str, records: List[Dict[str, Any]]) -> str:
+        """Format response for metadata and system queries."""
+        if not records:
+            return "No metadata information available."
+        
+        metadata = records[0]
+        response_parts = ["# 📊 Dataset Information", ""]
+        
+        # Basic dataset statistics
+        if 'total_projects' in metadata:
+            response_parts.append("## 📈 Dataset Overview")
+            response_parts.append(f"**📊 Total Projects:** {metadata['total_projects']:,}")
+            response_parts.append(f"**📋 Total Columns:** {metadata.get('total_columns', 'N/A')}")
+            response_parts.append("")
+        
+        # Geographic coverage
+        if any(key in metadata for key in ['unique_regions', 'unique_provinces', 'unique_municipalities']):
+            response_parts.append("## 🌍 Geographic Coverage")
+            if 'unique_regions' in metadata:
+                response_parts.append(f"**🏛️ Regions:** {metadata['unique_regions']}")
+            if 'unique_provinces' in metadata:
+                response_parts.append(f"**🏙️ Provinces:** {metadata['unique_provinces']}")
+            if 'unique_municipalities' in metadata:
+                response_parts.append(f"**🏘️ Municipalities:** {metadata['unique_municipalities']}")
+            response_parts.append("")
+        
+        # Contractor information
+        if 'unique_contractors' in metadata:
+            response_parts.append("## 🏗️ Contractor Information")
+            response_parts.append(f"**👷 Unique Contractors:** {metadata['unique_contractors']}")
+            response_parts.append("")
+        
+        # Date range
+        if 'date_range_start' in metadata and 'date_range_end' in metadata:
+            response_parts.append("## 📅 Timeline Coverage")
+            start_year = metadata['date_range_start']
+            end_year = metadata['date_range_end']
+            if start_year and end_year:
+                response_parts.append(f"**📅 Year Range:** {start_year} - {end_year}")
+                response_parts.append(f"**⏱️ Coverage Period:** {end_year - start_year + 1} years")
+            response_parts.append("")
+        
+        # Specific query responses
+        if 'unique_infra_types' in metadata:
+            response_parts.append("## 🔧 Infrastructure Types")
+            infra_types = metadata['unique_infra_types']
+            if infra_types:
+                for i, infra_type in enumerate(infra_types[:10], 1):
+                    response_parts.append(f"{i}. {infra_type}")
+            response_parts.append("")
+        
+        if 'unique_contractors_list' in metadata:
+            response_parts.append("## 🏗️ All Contractors")
+            contractors = metadata['unique_contractors_list']
+            if contractors:
+                response_parts.append(f"**Total:** {len(contractors)} contractors")
+                response_parts.append("**Sample contractors:**")
+                for i, contractor in enumerate(contractors[:10], 1):
+                    response_parts.append(f"{i}. {contractor}")
+                if len(contractors) > 10:
+                    response_parts.append(f"*... and {len(contractors) - 10} more contractors*")
+            response_parts.append("")
+        
+        # Data quality information
+        if 'missing_data_summary' in metadata:
+            missing_data = metadata['missing_data_summary']
+            if any(count > 0 for count in missing_data.values()):
+                response_parts.append("## ⚠️ Data Quality")
+                response_parts.append("**Columns with missing data:**")
+                for column, missing_count in missing_data.items():
+                    if missing_count > 0:
+                        percentage = (missing_count / metadata.get('total_projects', 1)) * 100
+                        response_parts.append(f"• **{column}:** {missing_count:,} missing ({percentage:.1f}%)")
+                response_parts.append("")
+        
+        return "\n".join(response_parts)
+    
+    def _format_analysis_response(self, query: str, records: List[Dict[str, Any]]) -> str:
+        """Format response for analysis and insights queries."""
+        if not records:
+            return "No analysis data available."
+        
+        analysis = records[0]
+        response_parts = ["# 📊 Analysis & Insights", ""]
+        
+        # Distribution analysis
+        if 'region_distribution' in analysis:
+            response_parts.append("## 🌍 Project Distribution by Region")
+            region_dist = analysis['region_distribution']
+            total_projects = sum(region_dist.values())
+            
+            response_parts.append(f"**📊 Total Projects Analyzed:** {total_projects:,}")
+            response_parts.append("")
+            
+            # Sort regions by project count
+            sorted_regions = sorted(region_dist.items(), key=lambda x: x[1], reverse=True)
+            
+            for i, (region, count) in enumerate(sorted_regions[:10], 1):
+                percentage = (count / total_projects) * 100
+                response_parts.append(f"**{i}. {region}**")
+                response_parts.append(f"   📊 Projects: {count:,} ({percentage:.1f}%)")
+                response_parts.append("")
+        
+        if 'province_distribution' in analysis:
+            response_parts.append("## 🏙️ Top Provinces by Project Count")
+            province_dist = analysis['province_distribution']
+            
+            for i, (province, count) in enumerate(province_dist.items(), 1):
+                response_parts.append(f"**{i}. {province}:** {count:,} projects")
+            response_parts.append("")
+        
+        if 'year_distribution' in analysis:
+            response_parts.append("## 📅 Projects by Completion Year")
+            year_dist = analysis['year_distribution']
+            
+            # Sort by year
+            sorted_years = sorted(year_dist.items())
+            
+            for year, count in sorted_years:
+                if year and str(year) != 'nan':
+                    response_parts.append(f"**{int(year)}:** {count:,} projects")
+            response_parts.append("")
+        
+        # Funding trend analysis
+        if 'funding_trend' in analysis:
+            response_parts.append("## 💰 Funding Trend Analysis")
+            funding_trend = analysis['funding_trend']
+            
+            # Sort by year
+            sorted_funding = sorted(funding_trend.items())
+            total_funding = sum(funding_trend.values())
+            
+            response_parts.append(f"**💰 Total Investment:** ₱{total_funding:,.2f}")
+            response_parts.append("")
+            
+            response_parts.append("**📈 Year-by-Year Breakdown:**")
+            for year, amount in sorted_funding:
+                if year and str(year) != 'nan':
+                    percentage = (amount / total_funding) * 100 if total_funding > 0 else 0
+                    response_parts.append(f"• **{int(year)}:** ₱{amount:,.2f} ({percentage:.1f}%)")
+            response_parts.append("")
+        
+        # Top analysis
+        if 'top_expensive_projects' in analysis:
+            response_parts.append("## 💰 Most Expensive Projects")
+            top_projects = analysis['top_expensive_projects']
+            
+            for i, project in enumerate(top_projects, 1):
+                cost = project.get('ContractCost', 0)
+                description = project.get('ProjectDescription', 'Unknown Project')
+                location = f"{project.get('Municipality', 'N/A')}, {project.get('Province', 'N/A')}"
+                
+                response_parts.append(f"### {i}. {description}")
+                response_parts.append(f"**📍 Location:** {location}")
+                response_parts.append(f"**💰 Cost:** ₱{cost:,.2f}")
+                response_parts.append("")
+        
+        if 'top_contractors' in analysis:
+            response_parts.append("## 🏗️ Top Contractors by Project Count")
+            top_contractors = analysis['top_contractors']
+            
+            for i, (contractor, count) in enumerate(top_contractors.items(), 1):
+                response_parts.append(f"**{i}. {contractor}:** {count} projects")
             response_parts.append("")
         
         return "\n".join(response_parts)
