@@ -567,46 +567,86 @@ sufficient information to fully answer the question, please indicate what inform
         if records and records[0].get('query_type') == 'cost_summary':
             return self._format_cost_summary_response(query, records)
         
-        # Calculate total cost and average cost
+        # Check if this is a location-specific cost query (e.g., "most expensive in Cebu")
+        query_lower = query.lower()
+        location_terms = ['in ', 'at ', 'for ', 'near ']
+        location = None
+        
+        # Extract location from query if present
+        for term in location_terms:
+            if term in query_lower:
+                # Get the text after the location term
+                loc_start = query_lower.find(term) + len(term)
+                location = query[loc_start:].split('.')[0].split('?')[0].strip()
+                break
+        
+        # Sort records by cost (highest first)
+        records = [r for r in records if r.get('ContractCost')]  # Filter out records without cost
+        records.sort(key=lambda x: float(x.get('ContractCost', 0)), reverse=True)
+        
+        # If location was specified, filter records for that location
+        if location:
+            location_records = []
+            for r in records:
+                if (location.lower() in str(r.get('Municipality', '')).lower() or 
+                    location.lower() in str(r.get('Province', '')).lower() or
+                    location.lower() in str(r.get('Region', '')).lower()):
+                    location_records.append(r)
+            
+            if location_records:
+                records = location_records
+                intro = f"Here are the flood control projects in {location} sorted by budget (highest first):"
+            else:
+                return f"I couldn't find any flood control projects in {location}. Would you like to try a different location?"
+        else:
+            intro = "Here are some flood control projects sorted by budget (highest first):"
+        
+        # Calculate statistics
         costs = [float(r.get('ContractCost', 0)) for r in records if r.get('ContractCost')]
         total_cost = sum(costs)
         avg_cost = total_cost / len(costs) if costs else 0
         
-        # Determine the type of cost query
-        query_lower = query.lower()
-        if any(term in query_lower for term in ['cheapest', 'lowest', 'least', 'smallest', 'minimum', 'low budget', 'low cost']):
-            records.sort(key=lambda x: float(x.get('ContractCost', float('inf'))))
-            intro = "Here are some of the most affordable flood control projects"
-        elif any(term in query_lower for term in ['expensive', 'highest', 'most', 'largest', 'maximum', 'high budget', 'high cost']):
-            records.sort(key=lambda x: float(x.get('ContractCost', 0)), reverse=True)
-            intro = "Here are some of the most expensive flood control projects"
-        else:
-            intro = "Here are some flood control projects and their costs"
-        
         # Build the response
-        response = (
-            f"{intro} in the dataset. "
-            f"The {'average' if len(records) > 1 else ''} project cost is approximately ₱{avg_cost:,.2f}."
-        )
+        response = f"## 📊 {intro}\n\n"
         
-        if total_cost > 0 and len(records) > 1:
-            response += f" The combined value of these projects is approximately ₱{total_cost:,.2f}."
-        
-        response += "\n\n"
+        # Add summary statistics if we have multiple projects
+        if len(records) > 1:
+            response += (f"- **Total projects found:** {len(records)}\n"
+                        f"- **Total investment:** ₱{total_cost:,.2f}\n"
+                        f"- **Average project cost:** ₱{avg_cost:,.2f}\n\n")
         
         # Add project details
         for i, record in enumerate(records[:5], 1):  # Limit to top 5 for brevity
             cost = float(record.get('ContractCost', 0))
+            location_info = []
+            if record.get('Municipality'):
+                location_info.append(record['Municipality'])
+            if record.get('Province') and record['Province'].lower() not in [loc.lower() for loc in location_info]:
+                location_info.append(record['Province'])
+            
             response += (
-                f"{i}. {record.get('ProjectDescription', 'A flood control project')} "
-                f"in {record.get('Municipality', 'an unspecified location')}, "
-                f"{record.get('Province', 'an unspecified province')} "
-                f"was completed for approximately ₱{cost:,.2f}. "
-                f"The contractor was {record.get('Contractor', 'not specified')}.\n\n"
+                f"### {i}. {record.get('ProjectDescription', 'Flood Control Project')}\n"
+                f"📍 **Location:** {', '.join(location_info) or 'Not specified'}\n"
+                f"💰 **Budget:** ₱{cost:,.2f}\n"
             )
+            
+            # Add contractor and status if available
+            if record.get('Contractor') and str(record['Contractor']).lower() != 'n/a':
+                response += f"🏗️ **Contractor:** {record['Contractor']}\n"
+            if record.get('Status') and str(record['Status']).lower() != 'n/a':
+                status_emoji = "✅" if 'complete' in str(record['Status']).lower() else "🔄"
+                response += f"{status_emoji} **Status:** {record['Status']}\n"
+            
+            # Add completion year if available
+            if record.get('CompletionYear') and str(record['CompletionYear']).strip() and str(record['CompletionYear']).lower() != 'n/a':
+                response += f"📅 **Completed:** {record['CompletionYear']}\n"
+            
+            response += "\n"  # Add spacing between projects
         
+        # Add a note about additional results
         if len(records) > 5:
-            response += f"\n\nThere are {len(records) - 5} more projects in the dataset. Would you like me to provide more details about any specific project?"
+            response += f"*Note: Showing top 5 projects out of {len(records)}. "
+            response += "You can ask for more specific details about any project.*"
         
         return response
     
@@ -659,56 +699,111 @@ sufficient information to fully answer the question, please indicate what inform
         """Generate a natural language response about contractors and their projects."""
         if not records:
             return "I couldn't find any information about contractors in the dataset."
+        
+        # Extract location from query if present
+        query_lower = query.lower()
+        location_terms = ['in ', 'at ', 'for ', 'near ']
+        location = None
+        
+        for term in location_terms:
+            if term in query_lower:
+                # Get the text after the location term
+                loc_start = query_lower.find(term) + len(term)
+                location = query[loc_start:].split('.')[0].split('?')[0].strip()
+                break
+        
+        # Filter records by location if specified
+        if location:
+            location_records = []
+            for r in records:
+                if (location.lower() in str(r.get('Municipality', '')).lower() or 
+                    location.lower() in str(r.get('Province', '')).lower() or
+                    location.lower() in str(r.get('Region', '')).lower()):
+                    location_records.append(r)
             
-        # Check if this is a contractor summary query (grouped by contractor)
-        if records and records[0].get('query_type') == 'contractor_summary':
-            response = "Here's what I found about contractors and their projects:\n\n"
+            if not location_records:
+                return f"I couldn't find any contractors with projects in {location}. Would you like to try a different location?"
             
-            for record in records[:5]:  # Limit to top 5 contractors for brevity
-                contractor = record.get('Contractor', 'an unknown contractor')
-                count = record.get('contractor_project_count', 0)
-                cost = float(record.get('ContractCost', 0))
-                location = f"{record.get('Municipality', 'an unspecified location')}, {record.get('Province', 'an unspecified province')}"
-                project = record.get('ProjectDescription', 'various flood control projects')
+            records = location_records
+        
+        # Create a dictionary to group projects by contractor
+        contractors = {}
+        for record in records:
+            contractor = record.get('Contractor', 'Unknown Contractor')
+            if contractor.lower() == 'n/a' or not contractor.strip():
+                contractor = 'Unknown Contractor'
                 
-                response += (
-                    f"{contractor} has been involved in {count} projects, "
-                    f"including {project} in {location}. "
-                    f"One of their projects had a contract value of approximately ₱{cost:,.2f}.\n\n"
-                )
+            if contractor not in contractors:
+                contractors[contractor] = {
+                    'projects': [],
+                    'total_value': 0,
+                    'locations': set(),
+                    'recent_year': 0
+                }
             
-            if len(records) > 5:
-                response += f"There are {len(records) - 5} more contractors in the dataset. Would you like me to provide more details about any specific contractor?"
-                
-            return response
+            cost = float(record.get('ContractCost', 0))
+            year = int(record['CompletionYear']) if record.get('CompletionYear') and str(record['CompletionYear']).isdigit() else 0
+            location = f"{record.get('Municipality', '')}, {record.get('Province', '')}".strip(', ')
             
+            contractors[contractor]['projects'].append({
+                'description': record.get('ProjectDescription', 'Flood Control Project'),
+                'cost': cost,
+                'location': location,
+                'year': year
+            })
+            
+            contractors[contractor]['total_value'] += cost
+            if location:
+                contractors[contractor]['locations'].add(location)
+            if year > contractors[contractor]['recent_year']:
+                contractors[contractor]['recent_year'] = year
+        
+        # Sort contractors by number of projects (descending) and then by total value (descending)
+        sorted_contractors = sorted(
+            contractors.items(),
+            key=lambda x: (len(x[1]['projects']), x[1]['total_value']),
+            reverse=True
+        )
+        
+        # Build the response
+        response = "## 🏗️ "
+        if location:
+            response += f"Top Contractors in {location}\n\n"
         else:
-            # Regular contractor search results
-            if len(records) == 1:
-                record = records[0]
-                return (
-                    f"I found a project by {record.get('Contractor', 'an unknown contractor')}. "
-                    f"The project involves {record.get('ProjectDescription', 'a flood control initiative')} "
-                    f"in {record.get('Municipality', 'an unspecified location')}, "
-                    f"{record.get('Province', 'an unspecified province')}. "
-                    f"The contract was valued at approximately ₱{float(record.get('ContractCost', 0)):,.2f} "
-                    f"and was completed in {record.get('CompletionYear', 'an unknown year')}."
-                )
-            else:
-                response = "I found several projects matching your query. Here are the details:\n\n"
-                for record in records[:5]:  # Limit to 5 projects for brevity
-                    response += (
-                        f"- {record.get('ProjectDescription', 'A flood control project')} "
-                        f"by {record.get('Contractor', 'an unknown contractor')} "
-                        f"in {record.get('Municipality', 'an unspecified location')} "
-                        f"(₱{float(record.get('ContractCost', 0)):,.2f}, "
-                        f"Completed: {record.get('CompletionYear', 'N/A')})\n"
-                    )
+            response += "Top Contractors\n\n"
+        
+        response += "Here are the most active contractors based on the number of projects and total contract value.\n\n"
+        
+        # Add contractor details
+        for i, (contractor, data) in enumerate(sorted_contractors[:10], 1):  # Limit to top 10
+            project_count = len(data['projects'])
+            total_value = data['total_value']
+            locations = ", ".join(sorted(data['locations'])[:3])  # Show up to 3 locations
+            if len(data['locations']) > 3:
+                locations += f" and {len(data['locations']) - 3} more locations"
+            
+            # Get the most expensive project
+            most_expensive = max(data['projects'], key=lambda x: x['cost'])
+            
+            response += (
+                f"### {i}. {contractor}\n"
+                f"📊 **Projects:** {project_count} • 💰 **Total Value:** ₱{total_value:,.2f}\n"
+            )
+            
+            if locations:
+                response += f"📍 **Locations:** {locations}\n"
                 
-                if len(records) > 5:
-                    response += f"\nThere are {len(records) - 5} more projects available. Would you like me to provide more details about any specific project?"
-                
-                return response
+            response += (
+                f"🏆 **Most Expensive Project:** {most_expensive['description']} "
+                f"(₱{most_expensive['cost']:,.2f} in {most_expensive['year'] or 'N/A'})\n\n"
+            )
+        
+        # Add a note about additional results
+        if len(sorted_contractors) > 10:
+            response += f"\n*Note: Showing top 10 out of {len(sorted_contractors)} contractors. "
+            response += "You can ask for more specific information about any contractor or location.*"
+        
+        return response
     
     def _format_completion_response(self, query: str, records: List[Dict[str, Any]]) -> str:
         """Format response for completion-related queries."""
@@ -1192,8 +1287,56 @@ sufficient information to fully answer the question, please indicate what inform
         if not records:
             return "I couldn't find any analysis results for your query. Could you try rephrasing or asking about something else?"
         
-        analysis = records[0]
-        response = "Here are some insights based on your query:\n\n"
+        # Check if this is a region count query
+        query_lower = query.lower()
+        is_region_query = any(term in query_lower for term in ["region", "regions", "which region"])
+        is_count_query = any(term in query_lower for term in ["count", "number", "how many", "most"])
+        
+        # Special handling for region count queries
+        if is_region_query and is_count_query:
+            # Extract region data from records
+            region_counts = {}
+            for record in records:
+                region = record.get('Region')
+                if region and str(region).strip().lower() != 'n/a':
+                    region = str(region).strip()
+                    region_counts[region] = region_counts.get(region, 0) + 1
+            
+            if not region_counts:
+                return "I couldn't find any region information in the data. The records might be missing region details."
+            
+            # Sort regions by project count
+            sorted_regions = sorted(region_counts.items(), key=lambda x: x[1], reverse=True)
+            total_projects = sum(region_counts.values())
+            
+            # Build response
+            response = f"I analyzed {total_projects:,} flood control projects across different regions. Here's what I found:\n\n"
+            
+            # Top regions
+            top_region, top_count = sorted_regions[0]
+            response += f"🏆 **{top_region}** has the most projects with **{top_count}** "
+            response += f"({(top_count/total_projects*100):.1f}% of all projects).\n\n"
+            
+            # Show top 5 regions
+            response += "**Top Regions by Number of Projects:**\n"
+            for i, (region, count) in enumerate(sorted_regions[:5], 1):
+                percentage = (count / total_projects) * 100
+                response += f"{i}. **{region}**: {count} projects ({percentage:.1f}%)\n"
+            
+            # Add comparison with bottom regions if significant
+            if len(sorted_regions) > 5:
+                bottom_region, bottom_count = sorted_regions[-1]
+                if bottom_count < top_count:  # Only show if there's a difference
+                    response += f"\nIn contrast, {bottom_region} has the fewest projects with just {bottom_count}."
+            
+            # Add note about total regions
+            response += f"\n*Projects are distributed across {len(region_counts)} regions in total.*"
+            
+            return response
+            
+        # Standard analysis response for other queries
+        analysis = records[0] if records else {}
+        response = "Here's what I found based on your query:\n\n"
         
         # Distribution analysis
         if 'region_distribution' in analysis and analysis['region_distribution']:
@@ -1207,7 +1350,7 @@ sufficient information to fully answer the question, please indicate what inform
             
             if len(sorted_regions) > 0:
                 top_region, top_count = sorted_regions[0]
-                response += f"The region with the most projects is {top_region} with {top_count} projects. "
+                response += f"The region with the most projects is **{top_region}** with **{top_count}** projects. "
                 
                 if len(sorted_regions) > 1:
                     bottom_region, bottom_count = sorted_regions[-1]
@@ -1224,7 +1367,7 @@ sufficient information to fully answer the question, please indicate what inform
             if len(sorted_regions) > 5:
                 response += f"- ... and {len(sorted_regions) - 5} other regions\n"
             
-        # Cost analysis
+            response += "\n"  # Add spacing before next section
         if 'cost_analysis' in analysis and analysis['cost_analysis']:
             cost_data = analysis['cost_analysis']
             
