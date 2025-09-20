@@ -90,11 +90,17 @@ class FloodControlDataHandler:
             location = self._extract_location(query_lower)
             if location:
                 filtered_df = self._filter_by_location(filtered_df, location)
+                # If location filtering returns no results, fall back to full dataset
+                if filtered_df.empty:
+                    filtered_df = self.df.copy()
             
             # Extract year mentions
             year = self._extract_year(query_lower)
             if year:
-                filtered_df = self._filter_by_year(filtered_df, year)
+                year_filtered = self._filter_by_year(filtered_df, year)
+                # Only apply year filter if it returns results
+                if not year_filtered.empty:
+                    filtered_df = year_filtered
             
             # Handle different query types
             query_type = self._classify_query(query_lower)
@@ -121,11 +127,13 @@ class FloodControlDataHandler:
     
     def _extract_location(self, query: str) -> str:
         """Extract location mentions from query."""
-        # Common Philippine locations
+        # Common Philippine locations - order matters (longer phrases first)
         locations = {
-            'cebu': ['cebu', 'cebu city'],
+            'cebu city': ['cebu city'],
+            'cebu': ['cebu'],
+            'davao city': ['davao city'],
+            'davao': ['davao'],
             'manila': ['manila', 'metro manila', 'ncr'],
-            'davao': ['davao', 'davao city'],
             'palawan': ['palawan', 'puerto princesa'],
             'region i': ['region i', 'region 1', 'ilocos'],
             'region ii': ['region ii', 'region 2', 'cagayan'],
@@ -145,7 +153,10 @@ class FloodControlDataHandler:
             'car': ['car', 'cordillera']
         }
         
-        for standard_name, variants in locations.items():
+        # Sort by length of variants (longest first) to match "cebu city" before "cebu"
+        sorted_locations = sorted(locations.items(), key=lambda x: max(len(v) for v in x[1]), reverse=True)
+        
+        for standard_name, variants in sorted_locations:
             for variant in variants:
                 if variant in query:
                     return standard_name
@@ -158,12 +169,29 @@ class FloodControlDataHandler:
         return int(years[0]) if years else None
     
     def _filter_by_location(self, df: pd.DataFrame, location: str) -> pd.DataFrame:
-        """Filter dataframe by location."""
-        location_mask = (
-            df['Municipality'].str.contains(location, case=False, na=False) |
-            df['Province'].str.contains(location, case=False, na=False) |
-            df['Region'].str.contains(location, case=False, na=False)
-        )
+        """Filter dataframe by location with flexible matching."""
+        # Create multiple search patterns for better matching
+        search_patterns = [location]
+        
+        # Add variations for common city names
+        if location == 'cebu city':
+            search_patterns.extend(['cebu city', 'cebu', 'capital.*cebu'])
+        elif location == 'davao city':
+            search_patterns.extend(['davao city', 'davao', 'capital.*davao'])
+        elif location == 'manila':
+            search_patterns.extend(['manila', 'metro manila', 'ncr'])
+        
+        # Create combined mask for all patterns
+        location_mask = pd.Series([False] * len(df), index=df.index)
+        
+        for pattern in search_patterns:
+            pattern_mask = (
+                df['Municipality'].str.contains(pattern, case=False, na=False, regex=True) |
+                df['Province'].str.contains(pattern, case=False, na=False, regex=True) |
+                df['Region'].str.contains(pattern, case=False, na=False, regex=True)
+            )
+            location_mask = location_mask | pattern_mask
+        
         return df[location_mask]
     
     def _filter_by_year(self, df: pd.DataFrame, year: int) -> pd.DataFrame:
@@ -177,32 +205,55 @@ class FloodControlDataHandler:
     
     def _classify_query(self, query: str) -> str:
         """Classify the type of query to determine processing approach."""
-        if any(term in query for term in ['expensive', 'cost', 'budget', 'price', 'amount', 'million', 'billion']):
+        # Cost-related queries
+        if any(term in query for term in ['expensive', 'cost', 'budget', 'price', 'amount', 'million', 'billion', 'cheapest', 'affordable']):
             return 'cost_analysis'
-        elif any(term in query for term in ['contractor', 'company', 'builder', 'construction', 'who built', 'who constructed']):
+        
+        # Contractor-related queries  
+        elif any(term in query for term in ['contractor', 'company', 'builder', 'construction', 'who built', 'who constructed', 'top contractor', 'most projects']):
             return 'contractor_analysis'
-        elif any(term in query for term in ['completed', 'finished', 'done', 'completion', 'when', 'year']):
+        
+        # Time/completion-related queries
+        elif any(term in query for term in ['completed', 'finished', 'done', 'completion', 'when', 'recent', 'latest', 'oldest', 'first']):
             return 'completion_analysis'
-        elif any(term in query for term in ['type', 'kind', 'drainage', 'bridge', 'seawall', 'revetment', 'mitigation']):
+        
+        # Project type queries
+        elif any(term in query for term in ['type', 'kind', 'drainage', 'bridge', 'seawall', 'revetment', 'mitigation', 'flood control', 'pumping', 'embankment']):
             return 'project_type_analysis'
-        elif any(term in query for term in ['where', 'location', 'region', 'province', 'city', 'municipality']):
+        
+        # Location-based queries (including count and investment analysis)
+        elif any(term in query for term in ['where', 'location', 'region', 'province', 'city', 'municipality', 'how many', 'count', 'number of', 'investment', 'total cost']):
             return 'location_analysis'
-        elif any(term in query for term in ['compare', 'vs', 'versus', 'difference', 'between']):
+        
+        # Comparison queries
+        elif any(term in query for term in ['compare', 'vs', 'versus', 'difference', 'between', 'comparison']):
             return 'comparison'
+        
+        # Default to general search
         else:
             return 'general'
     
     def _handle_cost_queries(self, df: pd.DataFrame, query: str, top_k: int) -> List[Dict[str, Any]]:
         """Handle cost-related queries."""
+        if df.empty:
+            return []
+        
+        # Filter out records with no cost data
+        cost_df = df[df['ContractCost'].notna() & (df['ContractCost'] > 0)]
+        
+        if cost_df.empty:
+            # Fallback to all records if no cost data
+            cost_df = df
+        
         if 'expensive' in query or 'highest' in query:
             # Sort by contract cost descending
-            sorted_df = df.sort_values('ContractCost', ascending=False, na_last=True)
+            sorted_df = cost_df.sort_values('ContractCost', ascending=False, na_last=True)
         elif 'cheapest' in query or 'lowest' in query:
             # Sort by contract cost ascending
-            sorted_df = df.sort_values('ContractCost', ascending=True, na_last=True)
+            sorted_df = cost_df.sort_values('ContractCost', ascending=True, na_last=True)
         else:
             # Default to expensive
-            sorted_df = df.sort_values('ContractCost', ascending=False, na_last=True)
+            sorted_df = cost_df.sort_values('ContractCost', ascending=False, na_last=True)
         
         return self._convert_to_records(sorted_df.head(top_k), 1.0)
     
@@ -229,51 +280,258 @@ class FloodControlDataHandler:
             return self._semantic_search(df, query, top_k)
     
     def _handle_completion_queries(self, df: pd.DataFrame, query: str, top_k: int) -> List[Dict[str, Any]]:
-        """Handle completion-related queries."""
-        if 'recent' in query or 'latest' in query:
-            # Sort by completion date descending
-            sorted_df = df.sort_values('CompletionDateActual', ascending=False, na_last=True)
-        elif 'oldest' in query or 'first' in query:
-            # Sort by completion date ascending
-            sorted_df = df.sort_values('CompletionDateActual', ascending=True, na_last=True)
+        """Handle completion-related queries with advanced filtering."""
+        if df.empty:
+            return []
+        
+        # Filter out records with no completion data
+        completion_df = df[df['CompletionYear'].notna() | df['CompletionDateActual'].notna()]
+        
+        if completion_df.empty:
+            completion_df = df  # Fallback to all records
+        
+        if 'recent' in query or 'latest' in query or '2024' in query or '2023' in query:
+            # Sort by completion date descending (most recent first)
+            if 'CompletionDateActual' in completion_df.columns:
+                sorted_df = completion_df.sort_values(['CompletionYear', 'CompletionDateActual'], 
+                                                    ascending=[False, False], na_last=True)
+            else:
+                sorted_df = completion_df.sort_values('CompletionYear', ascending=False, na_last=True)
+        elif 'oldest' in query or 'first' in query or 'early' in query:
+            # Sort by completion date ascending (oldest first)
+            if 'CompletionDateActual' in completion_df.columns:
+                sorted_df = completion_df.sort_values(['CompletionYear', 'CompletionDateActual'], 
+                                                    ascending=[True, True], na_last=True)
+            else:
+                sorted_df = completion_df.sort_values('CompletionYear', ascending=True, na_last=True)
         else:
-            # Default to recent
-            sorted_df = df.sort_values('CompletionYear', ascending=False, na_last=True)
+            # Default to recent, but also consider cost for relevance
+            sorted_df = completion_df.sort_values(['CompletionYear', 'ContractCost'], 
+                                                ascending=[False, False], na_last=True)
         
         return self._convert_to_records(sorted_df.head(top_k), 1.0)
     
     def _handle_project_type_queries(self, df: pd.DataFrame, query: str, top_k: int) -> List[Dict[str, Any]]:
-        """Handle project type queries."""
-        # Filter by project type
+        """Handle project type queries with comprehensive filtering."""
+        if df.empty:
+            return []
+        
         type_filtered = df.copy()
         
-        if 'drainage' in query:
-            type_filtered = df[df['TypeofWork'].str.contains('drainage', case=False, na=False)]
-        elif 'bridge' in query:
-            type_filtered = df[df['TypeofWork'].str.contains('bridge', case=False, na=False)]
-        elif 'seawall' in query:
-            type_filtered = df[df['TypeofWork'].str.contains('seawall', case=False, na=False)]
-        elif 'revetment' in query or 'riprapping' in query:
-            type_filtered = df[df['TypeofWork'].str.contains('revetment|riprapping', case=False, na=False)]
+        # Enhanced project type matching
+        project_type_patterns = {
+            'drainage': ['drainage', 'storm water', 'culvert', 'canal'],
+            'bridge': ['bridge', 'viaduct', 'overpass', 'underpass'],
+            'seawall': ['seawall', 'sea wall', 'coastal protection', 'breakwater'],
+            'revetment': ['revetment', 'riprapping', 'riprap', 'slope protection'],
+            'flood control': ['flood control', 'flood mitigation', 'flood management'],
+            'river': ['river', 'waterway', 'creek', 'stream'],
+            'embankment': ['embankment', 'dike', 'levee'],
+            'pumping': ['pumping station', 'pump house', 'drainage pump']
+        }
         
-        # Sort by cost if we have type-filtered results
-        if not type_filtered.empty:
-            sorted_df = type_filtered.sort_values('ContractCost', ascending=False, na_last=True)
-            return self._convert_to_records(sorted_df.head(top_k), 1.0)
-        else:
+        # Find matching project types
+        matched_types = []
+        for type_name, patterns in project_type_patterns.items():
+            if any(pattern in query.lower() for pattern in patterns):
+                matched_types.append(type_name)
+        
+        # Apply filters based on matched types
+        if matched_types:
+            type_masks = []
+            for type_name in matched_types:
+                patterns = project_type_patterns[type_name]
+                type_mask = pd.Series([False] * len(df), index=df.index)
+                
+                for pattern in patterns:
+                    pattern_mask = (
+                        df['TypeofWork'].str.contains(pattern, case=False, na=False) |
+                        df['ProjectDescription'].str.contains(pattern, case=False, na=False) |
+                        df['infra_type'].str.contains(pattern, case=False, na=False)
+                    )
+                    type_mask = type_mask | pattern_mask
+                
+                type_masks.append(type_mask)
+            
+            # Combine all type masks
+            combined_mask = pd.Series([False] * len(df), index=df.index)
+            for mask in type_masks:
+                combined_mask = combined_mask | mask
+            
+            type_filtered = df[combined_mask]
+        
+        # If no specific type filtering worked, try semantic search
+        if type_filtered.empty or len(type_filtered) == len(df):
             return self._semantic_search(df, query, top_k)
+        
+        # Sort by relevance (cost + completion year)
+        if 'ContractCost' in type_filtered.columns and 'CompletionYear' in type_filtered.columns:
+            # Multi-criteria sorting: recent projects with higher costs first
+            sorted_df = type_filtered.sort_values(['CompletionYear', 'ContractCost'], 
+                                                ascending=[False, False], na_last=True)
+        elif 'ContractCost' in type_filtered.columns:
+            sorted_df = type_filtered.sort_values('ContractCost', ascending=False, na_last=True)
+        else:
+            sorted_df = type_filtered
+        
+        return self._convert_to_records(sorted_df.head(top_k), 1.0)
     
     def _handle_location_queries(self, df: pd.DataFrame, query: str, top_k: int) -> List[Dict[str, Any]]:
-        """Handle location-based queries."""
-        # Sort by cost within the location
-        sorted_df = df.sort_values('ContractCost', ascending=False, na_last=True)
-        return self._convert_to_records(sorted_df.head(top_k), 1.0)
+        """Handle location-based queries with comprehensive analysis."""
+        if df.empty:
+            return []
+        
+        # Determine what aspect of location is being asked
+        if any(term in query.lower() for term in ['how many', 'count', 'number of']):
+            # Count-based queries - group by location
+            return self._handle_location_count_queries(df, query, top_k)
+        elif any(term in query.lower() for term in ['total cost', 'investment', 'budget', 'spending']):
+            # Investment analysis by location
+            return self._handle_location_investment_queries(df, query, top_k)
+        else:
+            # Default: show top projects by cost within location
+            sorted_df = df.sort_values(['ContractCost', 'CompletionYear'], 
+                                     ascending=[False, False], na_last=True)
+            return self._convert_to_records(sorted_df.head(top_k), 1.0)
+    
+    def _handle_location_count_queries(self, df: pd.DataFrame, query: str, top_k: int) -> List[Dict[str, Any]]:
+        """Handle location count queries."""
+        # Group by municipality and count projects
+        location_counts = df.groupby(['Municipality', 'Province']).agg({
+            'ProjectDescription': 'count',
+            'ContractCost': ['sum', 'mean'],
+            'CompletionYear': ['min', 'max']
+        }).round(2)
+        
+        location_counts.columns = ['project_count', 'total_cost', 'avg_cost', 'first_year', 'last_year']
+        location_counts = location_counts.reset_index()
+        location_counts = location_counts.sort_values('project_count', ascending=False)
+        
+        # Convert to records format
+        results = []
+        for _, row in location_counts.head(top_k).iterrows():
+            record = {
+                'Municipality': row['Municipality'],
+                'Province': row['Province'],
+                'project_count': int(row['project_count']),
+                'total_investment': float(row['total_cost']) if pd.notna(row['total_cost']) else 0,
+                'average_cost': float(row['avg_cost']) if pd.notna(row['avg_cost']) else 0,
+                'first_project_year': int(row['first_year']) if pd.notna(row['first_year']) else None,
+                'last_project_year': int(row['last_year']) if pd.notna(row['last_year']) else None,
+                'similarity_score': 1.0
+            }
+            results.append(record)
+        
+        return results
+    
+    def _handle_location_investment_queries(self, df: pd.DataFrame, query: str, top_k: int) -> List[Dict[str, Any]]:
+        """Handle location investment analysis queries."""
+        # Group by location and sum investments
+        investment_analysis = df.groupby(['Municipality', 'Province', 'Region']).agg({
+            'ContractCost': ['sum', 'count', 'mean', 'max'],
+            'CompletionYear': ['min', 'max']
+        }).round(2)
+        
+        investment_analysis.columns = ['total_investment', 'project_count', 'avg_cost', 'max_cost', 'first_year', 'last_year']
+        investment_analysis = investment_analysis.reset_index()
+        investment_analysis = investment_analysis.sort_values('total_investment', ascending=False)
+        
+        # Convert to records format
+        results = []
+        for _, row in investment_analysis.head(top_k).iterrows():
+            record = {
+                'Municipality': row['Municipality'],
+                'Province': row['Province'],
+                'Region': row['Region'],
+                'total_investment': float(row['total_investment']) if pd.notna(row['total_investment']) else 0,
+                'project_count': int(row['project_count']),
+                'average_project_cost': float(row['avg_cost']) if pd.notna(row['avg_cost']) else 0,
+                'largest_project_cost': float(row['max_cost']) if pd.notna(row['max_cost']) else 0,
+                'investment_period': f"{int(row['first_year']) if pd.notna(row['first_year']) else 'N/A'}-{int(row['last_year']) if pd.notna(row['last_year']) else 'N/A'}",
+                'similarity_score': 1.0
+            }
+            results.append(record)
+        
+        return results
     
     def _handle_comparison_queries(self, df: pd.DataFrame, query: str, top_k: int) -> List[Dict[str, Any]]:
-        """Handle comparison queries."""
-        # For now, return top projects by cost for comparison
-        sorted_df = df.sort_values('ContractCost', ascending=False, na_last=True)
-        return self._convert_to_records(sorted_df.head(top_k), 1.0)
+        """Handle comparison queries with advanced analysis."""
+        if df.empty:
+            return []
+        
+        # Extract comparison entities from query
+        comparison_terms = self._extract_comparison_terms(query.lower())
+        
+        if len(comparison_terms) >= 2:
+            # Compare specific entities
+            return self._handle_specific_comparisons(df, comparison_terms, top_k)
+        else:
+            # General comparison - show diverse top projects
+            return self._handle_general_comparisons(df, query, top_k)
+    
+    def _extract_comparison_terms(self, query: str) -> list:
+        """Extract entities being compared from query."""
+        # Common comparison patterns
+        comparison_patterns = [
+            r'between\s+(.+?)\s+and\s+(.+?)(?:\s|$)',
+            r'(.+?)\s+vs\s+(.+?)(?:\s|$)',
+            r'(.+?)\s+versus\s+(.+?)(?:\s|$)',
+            r'compare\s+(.+?)\s+(?:and|with)\s+(.+?)(?:\s|$)'
+        ]
+        
+        import re
+        for pattern in comparison_patterns:
+            match = re.search(pattern, query)
+            if match:
+                return [term.strip() for term in match.groups()]
+        
+        return []
+    
+    def _handle_specific_comparisons(self, df: pd.DataFrame, terms: list, top_k: int) -> List[Dict[str, Any]]:
+        """Handle specific entity comparisons."""
+        results = []
+        
+        for term in terms[:2]:  # Compare first two terms
+            # Search for projects matching this term
+            term_mask = (
+                df['Municipality'].str.contains(term, case=False, na=False) |
+                df['Province'].str.contains(term, case=False, na=False) |
+                df['Region'].str.contains(term, case=False, na=False) |
+                df['Contractor'].str.contains(term, case=False, na=False) |
+                df['TypeofWork'].str.contains(term, case=False, na=False)
+            )
+            
+            term_projects = df[term_mask]
+            if not term_projects.empty:
+                # Get top project for this term
+                top_project = term_projects.sort_values('ContractCost', ascending=False, na_last=True).iloc[0]
+                record = top_project.to_dict()
+                record['comparison_term'] = term
+                record['similarity_score'] = 1.0
+                results.append(record)
+        
+        return results[:top_k]
+    
+    def _handle_general_comparisons(self, df: pd.DataFrame, query: str, top_k: int) -> List[Dict[str, Any]]:
+        """Handle general comparison queries."""
+        # Return diverse projects for comparison
+        if 'region' in query.lower():
+            # Compare by regions
+            regions = df['Region'].value_counts().head(top_k).index
+            results = []
+            for region in regions:
+                region_projects = df[df['Region'] == region]
+                if not region_projects.empty:
+                    top_project = region_projects.sort_values('ContractCost', ascending=False, na_last=True).iloc[0]
+                    record = top_project.to_dict()
+                    record['comparison_category'] = 'region'
+                    record['similarity_score'] = 1.0
+                    results.append(record)
+            return results
+        else:
+            # General top projects for comparison
+            sorted_df = df.sort_values('ContractCost', ascending=False, na_last=True)
+            return self._convert_to_records(sorted_df.head(top_k), 1.0)
     
     def _semantic_search(self, df: pd.DataFrame, query: str, top_k: int) -> List[Dict[str, Any]]:
         """Perform semantic search using TF-IDF."""

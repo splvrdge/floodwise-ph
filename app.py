@@ -276,19 +276,13 @@ def render_mobile_header():
             st.session_state.show_sidebar = not st.session_state.get('show_sidebar', False)
 
 def render_chat_message(message_type, content, index):
-    """Render individual chat message with mobile-friendly styling."""
+    """Render individual chat message with clean formatting."""
     if message_type == "user":
-        st.markdown(f"""
-        <div class="user-message">
-            <strong>You:</strong> {content}
-        </div>
-        """, unsafe_allow_html=True)
+        st.markdown("**🙋‍♂️ You:**")
+        st.markdown(content)
     else:
-        st.markdown(f"""
-        <div class="assistant-message">
-            <strong>Assistant:</strong> {content}
-        </div>
-        """, unsafe_allow_html=True)
+        st.markdown("**🤖 Assistant:**")
+        st.markdown(content)
 
 def render_mobile_sidebar():
     """Render mobile-optimized sidebar content."""
