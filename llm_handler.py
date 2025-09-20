@@ -1,12 +1,13 @@
 import json
 import logging
 import os
-from typing import List, Dict, Any, Optional
-
+import re
+from typing import Any, Dict, List, Optional, Tuple, Union, Literal
 import httpx
 import openai
 import streamlit as st
 from dotenv import load_dotenv
+from enum import Enum
 
 # Configure logging
 logging.basicConfig(
@@ -18,13 +19,189 @@ logger = logging.getLogger(__name__)
 # Load environment variables
 load_dotenv()
 
+class QueryType(Enum):
+    """Types of user queries that can be handled."""
+    GENERAL_CONVERSATION = "general_conversation"
+    FLOOD_CONTROL_QUERY = "flood_control_query"
+    DATA_ANALYSIS = "data_analysis"
+    UNKNOWN = "unknown"
+
 class LLMHandler:
     """Handles LLM interactions for generating responses about flood control projects."""
+    
+    # Common greetings and small talk phrases
+    GENERAL_PHRASES = [
+        "hi", "hello", "hey", "how are you", "what's up", "good morning", 
+        "good afternoon", "good evening", "hi there", "hey there", "greetings"
+    ]
+    
+    # Keywords that indicate a flood control query
+    FLOOD_KEYWORDS = [
+        "flood", "drainage", "control", "project", "contract", "cost",
+        "location", "region", "province", "municipality", "contractor",
+        "flood control", "flood mitigation", "drainage system"
+    ]
     
     def __init__(self):
         self.client = None
         self.model = "gpt-3.5-turbo"
         self._initialize_client()
+    
+    def detect_query_type(self, query: str) -> QueryType:
+        """
+        Determine the type of the user query.
+        
+        Args:
+            query: The user's input query
+            
+        Returns:
+            QueryType: The detected type of query
+        """
+        if not query or not query.strip():
+            return QueryType.GENERAL_CONVERSATION
+            
+        query_lower = query.lower()
+        
+        # Check for general conversation
+        if any(phrase in query_lower for phrase in self.GENERAL_PHRASES):
+            return QueryType.GENERAL_CONVERSATION
+            
+        # Check for flood control related queries
+        if any(keyword in query_lower for keyword in self.FLOOD_KEYWORDS):
+            # Check if it's a data analysis query
+            analysis_terms = ["analyze", "analysis", "trend", "statistic", "compare", "summary"]
+            if any(term in query_lower for term in analysis_terms):
+                return QueryType.DATA_ANALYSIS
+            return QueryType.FLOOD_CONTROL_QUERY
+            
+        # If we can't determine, use LLM to classify
+        return self._classify_query_with_llm(query)
+    
+    def _classify_query_with_llm(self, query: str) -> QueryType:
+        """Use the LLM to classify ambiguous queries."""
+        try:
+            response = client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": "You are a helpful assistant that classifies user queries. "
+                                                "Respond with just one of: 'general', 'flood_control', or 'data_analysis'"},
+                    {"role": "user", "content": f"Classify this query: {query}"}
+                ],
+                temperature=0.0
+            )
+            
+            classification = response.choices[0].message.content.lower()
+            
+            if 'general' in classification:
+                return QueryType.GENERAL_CONVERSATION
+            elif 'data_analysis' in classification or 'analysis' in classification:
+                return QueryType.DATA_ANALYSIS
+            else:
+                return QueryType.FLOOD_CONTROL_QUERY
+                
+        except Exception as e:
+            logger.warning(f"Error classifying query with LLM: {e}")
+            return QueryType.UNKNOWN
+    
+    def handle_general_conversation(self, query: str) -> str:
+        """Handle general conversation queries."""
+        try:
+            response = client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": "You are a helpful assistant for the Flood Control Projects Database. "
+                                                "Be friendly, concise, and professional. If asked about your capabilities, "
+                                                "mention you can help with queries about flood control projects, "
+                                                "including costs, locations, contractors, and analysis."},
+                    {"role": "user", "content": query}
+                ],
+                temperature=0.7
+            )
+            return response.choices[0].message.content
+        except Exception as e:
+            logger.error(f"Error in general conversation: {e}")
+            return "I'm sorry, I encountered an error processing your message. How can I assist you with flood control projects?"
+    
+    def generate_response(self, query: str, records: List[Dict[str, Any]] = None, context: Dict[str, Any] = None) -> str:
+        """
+        Generate a response based on the user's query and available records.
+        
+        Args:
+            query: The user's input query
+            records: Optional list of records from the database (for flood control queries)
+            context: Additional context for the response
+            
+        Returns:
+            str: The generated response
+        """
+        if not query or not query.strip():
+            return "Please enter a valid query."
+        
+        # Initialize records if not provided
+        if records is None:
+            records = []
+            
+        # Detect the type of query
+        query_type = self.detect_query_type(query)
+        logger.info(f"Detected query type: {query_type}")
+        
+        # Handle general conversation
+        if query_type == QueryType.GENERAL_CONVERSATION:
+            return self.handle_general_conversation(query)
+            
+        # Handle unknown query types
+        if query_type == QueryType.UNKNOWN:
+            return ("I'm not sure if this is related to flood control projects. "
+                   "I can help with questions about flood control projects, including "
+                   "costs, locations, contractors, and analysis. Could you rephrase your question?")
+        
+        # For flood control queries, check if we have records
+        if not records and query_type != QueryType.GENERAL_CONVERSATION:
+            return self._generate_no_results_response(query)
+            
+        # Prepare context if not provided
+        if context is None:
+            context = {}
+        
+        # Handle flood control specific queries
+        try:
+            # Determine the appropriate response type based on the query and records
+            response_type = self._determine_response_type(query, records)
+            logger.info(f"Determined response type: {response_type}")
+            
+            # Generate the appropriate response
+            if response_type == "cost":
+                return self._format_cost_response(query, records)
+            elif response_type == "contractor":
+                return self._format_contractor_response(query, records)
+            elif response_type == "location":
+                return self._format_standard_location_response(query, records)
+            elif response_type == "comparison":
+                return self._format_comparison_response(query, records)
+            elif response_type == "analysis" or query_type == QueryType.DATA_ANALYSIS:
+                return self._format_analysis_response(query, records)
+            else:
+                # Fall back to general response format
+                return self._format_general_response(query, records)
+                
+        except Exception as e:
+            logger.error(f"Error generating response: {e}", exc_info=True)
+            try:
+                # Try a simple fallback using the LLM directly
+                prompt = self._prepare_prompt(query, records, context, query_type)
+                response = client.chat.completions.create(
+                    model=self.model,
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=0.3,
+                    max_tokens=500,
+                    top_p=0.9,
+                    frequency_penalty=0.5,
+                    presence_penalty=0.5
+                )
+                return response.choices[0].message.content.strip()
+            except Exception as inner_e:
+                logger.error(f"Fallback response generation also failed: {inner_e}")
+                return self._fallback_response(query, records)
     
     def _initialize_client(self):
         """Initialize OpenAI client."""
@@ -122,77 +299,90 @@ class LLMHandler:
     
     def _get_system_prompt(self, query_type: str) -> str:
         """Get the appropriate system prompt based on query type."""
-        prompts = {
-            'location': 'You are an expert analyst of Philippine flood control projects. Provide detailed location-based information about flood control projects, including specific regions, provinces, cities, and municipalities.',
-            'time': 'You are a time-series analyst for flood control projects. Provide detailed temporal information about project timelines, including start dates, completion dates, and durations.',
-            'cost': 'You are a financial analyst specializing in infrastructure projects. Provide detailed cost information, including budgets, contract amounts, and cost comparisons.',
-            'contractor': 'You are a construction industry expert. Provide detailed information about contractors, including their project history and performance metrics.',
-            'type': 'You are a civil engineering expert. Provide detailed information about different types of flood control projects and their specifications.',
-            'general': 'You are a helpful assistant that provides information about flood control projects in the Philippines. Answer questions clearly and concisely.'
+        base_prompt = """You are a knowledgeable assistant providing information about flood control projects in the Philippines. 
+        Your responses should be based SOLELY on the provided dataset. If information isn't available in the data, 
+        clearly state that rather than making assumptions.
+        
+        Response Guidelines:
+        - Use natural, conversational language
+        - Be concise but informative
+        - Use bullet points or numbered lists only when necessary
+        - Vary your sentence structure
+        - Use contractions (e.g., "don't" instead of "do not")
+        - If exact numbers aren't available, be clear about what information you do have
+        - Never make up or hallucinate information
+        - If the query is unclear, ask for clarification
+        - Format monetary values clearly (e.g., ₱1,234,567.89)
+        - For location-based queries, be specific about the administrative divisions (region, province, city/municipality)
+        - For contractor information, focus on the specific projects from the dataset
+        - For cost-related queries, be clear about whether the amounts are in Philippine Pesos (₱)
+        - For project types, use the exact terminology from the dataset
+        - For time-based queries, be clear about the time periods being referenced
+        - If multiple records are relevant, summarize the key points rather than listing each one
+        - When appropriate, provide context about why certain information might be significant
+        - If the query is too broad, suggest ways to narrow it down
+        - Always maintain a helpful and professional tone
+        - If you need to reference multiple records, group them logically
+        - When discussing costs, be clear about whether they're totals or averages"""
+        
+        type_specific = {
+            'location': 'Focus on the geographic aspects of the projects, including regions, provinces, and municipalities. Highlight any patterns in project distribution.',
+            'time': 'Concentrate on project timelines, including start and completion dates. Note any trends or patterns in project duration.',
+            'cost': 'Provide clear information about project costs, including contract amounts and any available budget breakdowns. Highlight any significant investments.',
+            'contractor': 'Discuss the contractors involved in the projects, focusing on their specific roles and the scale of their involvement. Only include information available in the dataset.',
+            'type': 'Describe the different types of flood control projects, using the exact terminology from the dataset. Note any variations in project scope or implementation.',
+            'general': 'Provide a balanced overview of the flood control projects, focusing on the key details that would be most relevant to the query.'
         }
-        return prompts.get(query_type, prompts['general'])
+        
+        return f"{base_prompt}\n\n{type_specific.get(query_type, type_specific['general'])}"
 
     def _prepare_prompt(self, query: str, records: List[Dict[str, Any]], context: Dict[str, Any] = None, query_type: str = 'general') -> str:
-        """Prepare the prompt for the LLM based on the query and records."""
-        # Format the records into a readable string
-        records_str = "\n\n".join([
-            f"Record {i+1}:\n" + "\n".join([f"{k}: {v}" for k, v in record.items()])
-            for i, record in enumerate(records)
-        ])
-        
-        # Include context if available
-        context_str = ""
-        if context:
-            context_str = f"\n\nContext about the dataset:\n{context}"
-        
-        return f"""Question: {query}
-
-Relevant project records:
-{records_str}{context_str}
-
-Please provide a clear and concise answer to the question based on the project records above. If the information is not available in the records, please state that clearly."""
-
-    def generate_response(self, query: str, records: List[Dict[str, Any]], context: Dict[str, Any] = None) -> str:
         """
-        Generate a response based on the query and relevant records.
+        Prepare the prompt for the LLM based on the query and records.
         
         Args:
-            query: User's question
-            records: Relevant records from the database
-            context: Additional context about the dataset
+            query: The user's query
+            records: List of relevant records from the database
+            context: Additional context for the response
+            query_type: Type of the query (general, cost, contractor, etc.)
             
         Returns:
-            Formatted response string
+            str: The generated prompt
         """
-        if not records:
-            return "I couldn't find any relevant information to answer your question. Please try rephrasing your query or ask about something else."
-            
         try:
-            # Determine query type
-            query_type = self._classify_query(query)
+            # Format the records into a more natural, readable string
+            records_str = "\n".join([
+                f"- {record.get('ProjectDescription', 'A flood control project')} "
+                f"in {record.get('Municipality', 'an unspecified location')}, "
+                f"{record.get('Province', 'an unspecified province')} "
+                f"(Cost: ₱{float(record.get('ContractCost', 0)):,.2f}, "
+                f"Contractor: {record.get('Contractor', 'Not specified')}, "
+                f"Status: {record.get('Status', 'Unknown')})"
+                for record in records[:10]  # Limit to first 10 records to avoid overwhelming the context
+            ])
             
-            # If no client is available, use a fallback response
-            if not self.client:
-                return self._fallback_response(query, records)
+            # Include context if available
+            context_str = ""
+            if context:
+                context_str = "\n\nAdditional context: "
+                for key, value in context.items():
+                    context_str += f"\n- {key}: {value}"
             
-            # Prepare the prompt with context and records
-            prompt = self._prepare_prompt(query, records, context, query_type)
+            # Get the system prompt based on query type
+            system_prompt = self._get_system_prompt(query_type)
             
-            # Call the LLM
-            response = self.client.chat.completions.create(
-                model=self.model,
-                messages=[
-                    {"role": "system", "content": self._get_system_prompt(query_type)},
-                    {"role": "user", "content": prompt}
-                ],
-                temperature=0.3,  # Lower temperature for more focused responses
-                max_tokens=1000
-            )
+            # Create the full prompt
+            prompt = f"""{system_prompt}
+
+User Query: {query}
+
+Available project information:
+{records_str}{context_str}
+
+Please provide a helpful, accurate response based on the information above. If the data doesn't contain the specific details being asked about, please let the user know what information is available."""
             
-            # Extract and clean the response
-            response_text = response.choices[0].message.content.strip()
-            return response_text
-            
+            return prompt
+                
         except Exception as e:
             # If there's an error with the LLM, fall back to a simpler response
             print(f"Error generating response: {str(e)}")
@@ -203,86 +393,45 @@ Please provide a clear and concise answer to the question based on the project r
         if not records:
             return "I couldn't find any information matching your query. Please try rephrasing your question."
             
-        # Try to generate a basic response based on the records
         try:
-            # Count records by contractor if it's a contractor query
-            if any(term in query.lower() for term in ['contractor', 'company']):
+            # For contractor queries, group by contractor
+            if any(term in query.lower() for term in ['contractor', 'company', 'firm']):
                 contractors = {}
                 for record in records:
                     contractor = record.get('contractor', 'Unknown')
-                    contractors[contractor] = contractors.get(contractor, 0) + 1
+                    if contractor not in contractors:
+                        contractors[contractor] = []
+                    contractors[contractor].append(record)
                 
-                response = ["Here are the contractors I found:"]
-                for i, (contractor, count) in enumerate(sorted(contractors.items(), key=lambda x: x[1], reverse=True)[:5], 1):
-                    response.append(f"{i}. {contractor} ({count} projects)")
+                response = ["I found projects from the following contractors:"]
+                for contractor, projects in list(contractors.items())[:5]:  # Limit to top 5
+                    response.append(f"- {contractor}: {len(projects)} projects")
                 return "\n".join(response)
                 
-            # For location queries, list unique locations
-            elif any(term in query.lower() for term in ['location', 'region', 'province', 'city']):
-                locations = {}
-                for record in records:
-                    location = record.get('location', 'Unknown')
-                    locations[location] = locations.get(location, 0) + 1
-                
-                response = ["Here are the locations I found:"]
-                for i, (location, count) in enumerate(sorted(locations.items(), key=lambda x: x[1], reverse=True)[:5], 1):
-                    response.append(f"{i}. {location} ({count} projects)")
-                return "\n".join(response)
-                
-            # For cost queries, show the most expensive projects
-            elif any(term in query.lower() for term in ['cost', 'price', 'expensive', 'cheap']):
+            # For cost queries, show top projects by cost
+            if any(term in query.lower() for term in ['cost', 'price', 'budget']):
                 sorted_records = sorted(
-                    [r for r in records if 'contract_cost' in r],
-                    key=lambda x: float(str(x.get('contract_cost', 0).replace(',', '').replace('₱', '') or 0)),
+                    records,
+                    key=lambda x: float(x.get('contract_cost', 0)) if x.get('contract_cost') else 0,
                     reverse=True
-                )[:5]
-                
+                )
                 response = ["Here are the most expensive projects I found:"]
-                for i, record in enumerate(sorted_records, 1):
+                for i, record in enumerate(sorted_records[:5], 1):
                     name = record.get('project_name', 'Unnamed Project')
                     cost = record.get('contract_cost', 'N/A')
                     response.append(f"{i}. {name} - {cost}")
                 return "\n".join(response)
                 
             # Default response
-            return f"I found {len(records)} relevant projects. Here are some details:\n\n" + \
-                   "\n\n".join([f"• {r.get('project_name', 'Unnamed Project')} - {r.get('contractor', 'Unknown')}" for r in records[:5]])
+            project_details = "\n\n".join(
+                f"• {r.get('project_name', 'Unnamed Project')} - {r.get('contractor', 'Unknown')}" 
+                for r in records[:5]
+            )
+            return f"I found {len(records)} relevant projects. Here are some details:\n\n{project_details}"
                    
         except Exception as e:
             print(f"Error in fallback response: {str(e)}")
             return "I found some information but couldn't process it properly. Please try rephrasing your question."
-    
-    def _classify_query(self, query: str) -> str:
-        """Classify the type of question being asked."""
-        query_lower = query.lower()
-        
-        # Location-based questions
-        location_terms = ['region', 'province', 'city', 'municipality', 'barangay', 'in ', 'at ', 'from ']
-        if any(term in query_lower for term in location_terms):
-            return 'location'
-            
-        # Time-based questions
-        time_terms = ['year', 'month', 'date', 'day', 'week', 'when', 'complet', 'start', 'end', 'duration']
-        if any(term in query_lower for term in time_terms):
-            return 'time'
-            
-        # Cost/budget questions
-        cost_terms = ['cost', 'price', 'budget', 'expensive', 'cheap', 'amount', 'fund', 'investment']
-        if any(term in query_lower for term in cost_terms):
-            return 'cost'
-            
-        # Contractor questions
-        contractor_terms = ['contractor', 'company', 'implement', 'award', 'won', 'bid']
-        if any(term in query_lower for term in contractor_terms):
-            return 'contractor'
-            
-        # Project type questions
-        type_terms = ['type', 'kind', 'category', 'classification']
-        if any(term in query_lower for term in type_terms):
-            return 'type'
-            
-        # Default to general information
-        return 'general'
     
     def _create_user_prompt(self, query: str, context: str) -> str:
         """Create the user prompt with query and context."""
@@ -313,98 +462,71 @@ sufficient information to fully answer the question, please indicate what inform
         
         for i, record in enumerate(relevant_records[:5], 1):  # Limit to top 5 records
             context_parts.append(f"\nRecord {i}:")
+            record_info = []
             for key, value in record.items():
-                if key != 'similarity_score' and value is not None and str(value).strip():
-                    context_parts.append(f"  {key}: {value}")
-        
+                if value is not None and value != '':
+                    if key.lower() == 'contractcost' and isinstance(value, (int, float, str)):
+                        try:
+                            cost = float(value)
+                            value = f"₱{cost:,.2f}"
+                        except (ValueError, TypeError):
+                            pass
+                    record_info.append(f"  - {key}: {value}")
+            context_parts.extend(record_info)
+            
         return "\n".join(context_parts)
     
-    def _fallback_response(self, query: str, relevant_records: List[Dict[str, Any]]) -> str:
-        """Generate a comprehensive fallback response when LLM is not available."""
-        if not relevant_records:
-            return self._generate_no_results_response(query)
-        
-        # Analyze query type for better response formatting
-        query_type = self._analyze_query_intent(query.lower())
-        
-        if query_type == 'cost_analysis':
-            return self._format_cost_response(query, relevant_records)
-        elif query_type == 'contractor_analysis':
-            return self._format_contractor_response(query, relevant_records)
-        elif query_type == 'completion_analysis':
-            return self._format_completion_response(query, relevant_records)
-        elif query_type == 'project_type_analysis':
-            return self._format_project_type_response(query, relevant_records)
-        elif query_type == 'location_analysis':
-            return self._format_location_response(query, relevant_records)
-        elif query_type == 'comparison':
-            return self._format_comparison_response(query, relevant_records)
-        elif query_type == 'metadata_analysis':
-            return self._format_metadata_response(query, relevant_records)
-        elif query_type == 'analysis_insights':
-            return self._format_analysis_response(query, relevant_records)
-        else:
-            return self._format_general_response(query, relevant_records)
-    
-    def _analyze_query_intent(self, query: str) -> str:
-        """Analyze query to determine the best response format."""
-        if any(term in query for term in ['expensive', 'cost', 'budget', 'price', 'amount']):
-            return 'cost_analysis'
-        elif any(term in query for term in ['contractor', 'company', 'builder', 'who built']):
-            return 'contractor_analysis'
-        elif any(term in query for term in ['completed', 'finished', 'when', 'completion']):
-            return 'completion_analysis'
-        elif any(term in query for term in ['type', 'drainage', 'bridge', 'seawall', 'revetment']):
-            return 'project_type_analysis'
-        elif any(term in query for term in ['where', 'location', 'region', 'province', 'city']):
-            return 'location_analysis'
-        else:
-            return 'general'
-    
     def _format_cost_response(self, query: str, records: List[Dict[str, Any]]) -> str:
-        """Format response for cost-related queries."""
-        response_parts = []
-        
+        """Generate a natural language response about project costs."""
+        if not records:
+            return "I couldn't find any cost information in the dataset."
+            
         # Check if this is a cost summary query
         if records and records[0].get('query_type') == 'cost_summary':
             return self._format_cost_summary_response(query, records)
         
-        if any(term in query.lower() for term in ['cheapest', 'lowest', 'least', 'smallest', 'minimum', 'low budget', 'low cost']):
-            response_parts.append("# 💰 Most Affordable Flood Control Projects")
-        elif any(term in query.lower() for term in ['expensive', 'highest', 'most', 'largest', 'maximum', 'high budget', 'high cost']):
-            response_parts.append("# 💰 Most Expensive Flood Control Projects")
+        # Calculate total cost and average cost
+        costs = [float(r.get('ContractCost', 0)) for r in records if r.get('ContractCost')]
+        total_cost = sum(costs)
+        avg_cost = total_cost / len(costs) if costs else 0
+        
+        # Determine the type of cost query
+        query_lower = query.lower()
+        if any(term in query_lower for term in ['cheapest', 'lowest', 'least', 'smallest', 'minimum', 'low budget', 'low cost']):
+            records.sort(key=lambda x: float(x.get('ContractCost', float('inf'))))
+            intro = "Here are some of the most affordable flood control projects"
+        elif any(term in query_lower for term in ['expensive', 'highest', 'most', 'largest', 'maximum', 'high budget', 'high cost']):
+            records.sort(key=lambda x: float(x.get('ContractCost', 0)), reverse=True)
+            intro = "Here are some of the most expensive flood control projects"
         else:
-            response_parts.append("# 💰 Flood Control Projects by Cost")
+            intro = "Here are some flood control projects and their costs"
         
-        response_parts.append("")
+        # Build the response
+        response = (
+            f"{intro} in the dataset. "
+            f"The {'average' if len(records) > 1 else ''} project cost is approximately ₱{avg_cost:,.2f}."
+        )
         
-        # Calculate total cost
-        total_cost = sum(float(r.get('ContractCost', 0)) for r in records if r.get('ContractCost'))
-        if total_cost > 0:
-            response_parts.append(f"**📊 Total Combined Investment:** ₱{total_cost:,.2f}")
-            response_parts.append("")
+        if total_cost > 0 and len(records) > 1:
+            response += f" The combined value of these projects is approximately ₱{total_cost:,.2f}."
         
-        for i, record in enumerate(records[:5], 1):
-            cost = record.get('ContractCost')
-            abc = record.get('ABC')
-            
-            response_parts.append(f"## {i}. {record.get('ProjectDescription', 'Unknown Project')}")
-            response_parts.append(f"**📍 Location:** {record.get('Municipality', 'N/A')}, {record.get('Province', 'N/A')}")
-            
-            if cost:
-                response_parts.append(f"**💰 Contract Cost:** ₱{float(cost):,.2f}")
-            if abc and abc != cost:
-                response_parts.append(f"**📋 Approved Budget:** ₱{float(abc):,.2f}")
-                if cost and abc:
-                    savings = float(abc) - float(cost)
-                    if savings > 0:
-                        response_parts.append(f"**💡 Budget Savings:** ₱{savings:,.2f}")
-            
-            response_parts.append(f"**🏗️ Contractor:** {record.get('Contractor', 'N/A')}")
-            response_parts.append(f"**📅 Completion Year:** {record.get('CompletionYear', 'N/A')}")
-            response_parts.append("")
+        response += "\n\n"
         
-        return "\n".join(response_parts)
+        # Add project details
+        for i, record in enumerate(records[:5], 1):  # Limit to top 5 for brevity
+            cost = float(record.get('ContractCost', 0))
+            response += (
+                f"{i}. {record.get('ProjectDescription', 'A flood control project')} "
+                f"in {record.get('Municipality', 'an unspecified location')}, "
+                f"{record.get('Province', 'an unspecified province')} "
+                f"was completed for approximately ₱{cost:,.2f}. "
+                f"The contractor was {record.get('Contractor', 'not specified')}.\n\n"
+            )
+        
+        if len(records) > 5:
+            response += f"\n\nThere are {len(records) - 5} more projects in the dataset. Would you like me to provide more details about any specific project?"
+        
+        return response
     
     def _format_cost_summary_response(self, query: str, records: List[Dict[str, Any]]) -> str:
         """Format response for cost summary queries (average, total, etc.)."""
@@ -452,36 +574,59 @@ sufficient information to fully answer the question, please indicate what inform
         return "\n".join(response_parts)
     
     def _format_contractor_response(self, query: str, records: List[Dict[str, Any]]) -> str:
-        """Format response for contractor-related queries."""
-        response_parts = ["# 🏗️ Contractor Analysis", ""]
-        
-        # Check if we have contractor project counts
-        if records and 'contractor_project_count' in records[0]:
-            response_parts.append("**📊 Top Contractors by Project Count**")
-            response_parts.append("")
+        """Generate a natural language response about contractors and their projects."""
+        if not records:
+            return "I couldn't find any information about contractors in the dataset."
             
-            for i, record in enumerate(records[:5], 1):
-                contractor = record.get('Contractor', 'Unknown')
+        # Check if this is a contractor summary query (grouped by contractor)
+        if records and records[0].get('query_type') == 'contractor_summary':
+            response = "Here's what I found about contractors and their projects:\n\n"
+            
+            for record in records[:5]:  # Limit to top 5 contractors for brevity
+                contractor = record.get('Contractor', 'an unknown contractor')
                 count = record.get('contractor_project_count', 0)
-                cost = record.get('ContractCost', 0)
+                cost = float(record.get('ContractCost', 0))
+                location = f"{record.get('Municipality', 'an unspecified location')}, {record.get('Province', 'an unspecified province')}"
+                project = record.get('ProjectDescription', 'various flood control projects')
                 
-                response_parts.append(f"## {i}. {contractor}")
-                response_parts.append(f"**📊 Total Projects:** {count}")
-                response_parts.append(f"**💰 Sample Project Cost:** ₱{float(cost):,.2f}")
-                response_parts.append(f"**📍 Location:** {record.get('Municipality', 'N/A')}, {record.get('Province', 'N/A')}")
-                response_parts.append(f"**🏗️ Sample Project:** {record.get('ProjectDescription', 'N/A')}")
-                response_parts.append("")
+                response += (
+                    f"{contractor} has been involved in {count} projects, "
+                    f"including {project} in {location}. "
+                    f"One of their projects had a contract value of approximately ₱{cost:,.2f}.\n\n"
+                )
+            
+            if len(records) > 5:
+                response += f"There are {len(records) - 5} more contractors in the dataset. Would you like me to provide more details about any specific contractor?"
+                
+            return response
+            
         else:
             # Regular contractor search results
-            for i, record in enumerate(records[:5], 1):
-                response_parts.append(f"## {i}. {record.get('Contractor', 'Unknown Contractor')}")
-                response_parts.append(f"**🏗️ Project:** {record.get('ProjectDescription', 'N/A')}")
-                response_parts.append(f"**📍 Location:** {record.get('Municipality', 'N/A')}, {record.get('Province', 'N/A')}")
-                response_parts.append(f"**💰 Contract Cost:** ₱{float(record.get('ContractCost', 0)):,.2f}")
-                response_parts.append(f"**📅 Completion Year:** {record.get('CompletionYear', 'N/A')}")
-                response_parts.append("")
-        
-        return "\n".join(response_parts)
+            if len(records) == 1:
+                record = records[0]
+                return (
+                    f"I found a project by {record.get('Contractor', 'an unknown contractor')}. "
+                    f"The project involves {record.get('ProjectDescription', 'a flood control initiative')} "
+                    f"in {record.get('Municipality', 'an unspecified location')}, "
+                    f"{record.get('Province', 'an unspecified province')}. "
+                    f"The contract was valued at approximately ₱{float(record.get('ContractCost', 0)):,.2f} "
+                    f"and was completed in {record.get('CompletionYear', 'an unknown year')}."
+                )
+            else:
+                response = "I found several projects matching your query. Here are the details:\n\n"
+                for record in records[:5]:  # Limit to 5 projects for brevity
+                    response += (
+                        f"- {record.get('ProjectDescription', 'A flood control project')} "
+                        f"by {record.get('Contractor', 'an unknown contractor')} "
+                        f"in {record.get('Municipality', 'an unspecified location')} "
+                        f"(₱{float(record.get('ContractCost', 0)):,.2f}, "
+                        f"Completed: {record.get('CompletionYear', 'N/A')})\n"
+                    )
+                
+                if len(records) > 5:
+                    response += f"\nThere are {len(records) - 5} more projects available. Would you like me to provide more details about any specific project?"
+                
+                return response
     
     def _format_completion_response(self, query: str, records: List[Dict[str, Any]]) -> str:
         """Format response for completion-related queries."""
@@ -716,286 +861,421 @@ sufficient information to fully answer the question, please indicate what inform
         return "\n".join(response_parts)
     
     def _format_standard_location_response(self, query: str, records: List[Dict[str, Any]]) -> str:
-        """Format standard location response."""
-        response_parts = ["# 📍 Location-Based Project Analysis", ""]
-        
+        """Generate a natural language response about projects in specific locations."""
+        if not records:
+            return "I couldn't find any projects in the specified location(s)."
+            
         # Get unique locations
-        locations = set(f"{r.get('Municipality', 'N/A')}, {r.get('Province', 'N/A')}" for r in records)
-        if len(locations) > 1:
-            response_parts.append(f"**📊 Locations Covered:** {len(locations)} municipalities/cities")
-            response_parts.append("")
+        locations = {}
+        for r in records:
+            loc_key = (r.get('Municipality'), r.get('Province'))
+            if loc_key not in locations:
+                locations[loc_key] = []
+            locations[loc_key].append(r)
+            
+        response = "Here's what I found about flood control projects "
         
-        # Calculate total investment in the area
+        if len(locations) == 1:
+            loc_name = f"{list(locations.keys())[0][0]}, {list(locations.keys())[0][1]}"
+            response += f"in {loc_name}:\n\n"
+        else:
+            response += f"across {len(locations)} different locations. Here are the details:\n\n"
+        
+        # Calculate statistics
         total_cost = sum(float(r.get('ContractCost', 0)) for r in records if r.get('ContractCost'))
+        project_count = len(records)
+        avg_cost = total_cost / project_count if project_count > 0 else 0
+        
+        # Add summary information
         if total_cost > 0:
-            response_parts.append(f"**💰 Total Investment:** ₱{total_cost:,.2f}")
-            response_parts.append("")
+            response += f"There {'is' if project_count == 1 else 'are'} {project_count} project{'s' if project_count != 1 else ''} "
+            response += f"with a total investment of approximately ₱{total_cost:,.2f}. "
+            response += f"The average project cost is around ₱{avg_cost:,.2f}.\n\n"
         
-        for i, record in enumerate(records[:5], 1):
-            response_parts.append(f"## {i}. {record.get('ProjectDescription', 'Unknown Project')}")
-            response_parts.append(f"**📍 Location:** {record.get('Municipality', 'N/A')}, {record.get('Province', 'N/A')}")
-            response_parts.append(f"**🌏 Region:** {record.get('Region', 'N/A')}")
-            response_parts.append(f"**🔧 Type:** {record.get('TypeofWork', 'N/A')}")
-            response_parts.append(f"**💰 Contract Cost:** ₱{float(record.get('ContractCost', 0)):,.2f}")
-            response_parts.append(f"**🏗️ Contractor:** {record.get('Contractor', 'N/A')}")
-            response_parts.append(f"**📅 Completion Year:** {record.get('CompletionYear', 'N/A')}")
-            response_parts.append("")
+        # Group projects by location
+        for (municipality, province), loc_records in list(locations.items())[:5]:  # Limit to 5 locations
+            loc_name = f"{municipality if municipality else 'Unknown location'}, {province if province else 'unknown province'}"
+            loc_cost = sum(float(r.get('ContractCost', 0)) for r in loc_records if r.get('ContractCost'))
+            loc_count = len(loc_records)
+            
+            response += f"In {loc_name}, there {'is' if loc_count == 1 else 'are'} {loc_count} project{'s' if loc_count != 1 else ''} "
+            response += f"with a total investment of ₱{loc_cost:,.2f}. "
+            
+            # Add some project examples
+            if loc_count <= 3:
+                projects = ", ".join(f"{r.get('ProjectDescription', 'a flood control project')} (₱{float(r.get('ContractCost', 0)):,.2f})" 
+                                    for r in loc_records[:3])
+                response += f"These include: {projects}."
+            else:
+                sample = ", ".join(f"{r.get('ProjectDescription', 'a project')} (₱{float(r.get('ContractCost', 0)):,.2f})" 
+                                  for r in loc_records[:2])
+                response += f"These include {sample}, and {loc_count - 2} more projects."
+            
+            response += "\n\n"
         
-        return "\n".join(response_parts)
+        # Add a note if there are more locations
+        if len(locations) > 5:
+            response += f"There are {len(locations) - 5} additional locations with flood control projects. "
+            response += "Would you like me to provide more details about any specific location?"
+        
+        return response
     
     def _format_comparison_response(self, query: str, records: List[Dict[str, Any]]) -> str:
-        """Format response for comparison queries."""
-        response_parts = ["# ⚖️ Comparison Analysis", ""]
+        """Generate a natural language comparison of different entities based on project data."""
+        if not records:
+            return "I couldn't find enough data to make a meaningful comparison."
         
-        # Check if records have comparison metadata
-        if records and 'comparison_term' in records[0]:
-            # Specific entity comparison
-            response_parts.append("**🔍 Side-by-Side Comparison**")
-            response_parts.append("")
-            
-            for i, record in enumerate(records[:5], 1):
-                term = record.get('comparison_term', f'Entity {i}')
-                response_parts.append(f"## {term.title()}")
-                response_parts.append(f"**🏗️ Top Project:** {record.get('ProjectDescription', 'N/A')}")
-                response_parts.append(f"**📍 Location:** {record.get('Municipality', 'N/A')}, {record.get('Province', 'N/A')}")
-                response_parts.append(f"**💰 Contract Cost:** ₱{float(record.get('ContractCost', 0)):,.2f}")
-                response_parts.append(f"**🏗️ Contractor:** {record.get('Contractor', 'N/A')}")
-                response_parts.append(f"**📅 Completion Year:** {record.get('CompletionYear', 'N/A')}")
-                response_parts.append("")
-        
-        elif records and 'comparison_category' in records[0]:
-            # Category-based comparison
+        # Check if this is a category-based comparison
+        if records and 'comparison_category' in records[0]:
             category = records[0].get('comparison_category', 'category')
-            response_parts.append(f"**📊 Top Projects by {category.title()}**")
-            response_parts.append("")
+            response = f"Here's a comparison of projects by {category}:\n\n"
             
             for i, record in enumerate(records[:5], 1):
                 category_value = record.get('Region', record.get('Province', record.get('Municipality', f'Item {i}')))
-                response_parts.append(f"## {i}. {category_value}")
-                response_parts.append(f"**🏗️ Project:** {record.get('ProjectDescription', 'N/A')}")
-                response_parts.append(f"**📍 Location:** {record.get('Municipality', 'N/A')}, {record.get('Province', 'N/A')}")
-                response_parts.append(f"**💰 Contract Cost:** ₱{float(record.get('ContractCost', 0)):,.2f}")
-                response_parts.append(f"**🏗️ Contractor:** {record.get('Contractor', 'N/A')}")
-                response_parts.append(f"**📅 Completion Year:** {record.get('CompletionYear', 'N/A')}")
-                response_parts.append("")
-        
-        else:
-            # General comparison
-            response_parts.append("**🏆 Top Projects for Comparison**")
-            response_parts.append("")
-            
-            # Calculate some comparison metrics
-            total_cost = sum(float(r.get('ContractCost', 0)) for r in records if r.get('ContractCost'))
-            avg_cost = total_cost / len(records) if records else 0
-            
-            response_parts.append(f"**💰 Total Value:** ₱{total_cost:,.2f}")
-            response_parts.append(f"**📊 Average Cost:** ₱{avg_cost:,.2f}")
-            response_parts.append("")
-            
-            for i, record in enumerate(records[:5], 1):
                 cost = float(record.get('ContractCost', 0))
-                cost_vs_avg = ((cost - avg_cost) / avg_cost * 100) if avg_cost > 0 else 0
                 
-                response_parts.append(f"## {i}. {record.get('ProjectDescription', 'Unknown Project')}")
-                response_parts.append(f"**📍 Location:** {record.get('Municipality', 'N/A')}, {record.get('Province', 'N/A')}")
-                response_parts.append(f"**💰 Contract Cost:** ₱{cost:,.2f} ({cost_vs_avg:+.1f}% vs average)")
-                response_parts.append(f"**🏗️ Contractor:** {record.get('Contractor', 'N/A')}")
-                response_parts.append(f"**📅 Completion Year:** {record.get('CompletionYear', 'N/A')}")
-                response_parts.append("")
+                response += f"{i}. {category_value}: "
+                response += f"{record.get('ProjectDescription', 'A flood control project')} "
+                response += f"(₱{cost:,.2f})\n"
+                
+                if i < min(5, len(records)):  # Add spacing between items
+                    response += "\n"
+            
+            if len(records) > 5:
+                response += f"\nThere are {len(records) - 5} more items in this category. "
+                response += "Would you like me to show more details about any specific one?"
+                
+            return response
+            
+        # Default comparison by grouping records
+        comparison_groups = {}
+        for record in records:
+            group_key = record.get('comparison_term', 'Unknown')
+            if group_key not in comparison_groups:
+                comparison_groups[group_key] = []
+            comparison_groups[group_key].append(record)
         
-        return "\n".join(response_parts)
+        # Start building the response
+        response = "Here's a comparison based on your query:\n\n"
+        
+        # Add summary statistics for each group
+        for group, items in comparison_groups.items():
+            total_cost = sum(float(r.get('ContractCost', 0)) for r in items if r.get('ContractCost'))
+            avg_cost = total_cost / len(items) if items else 0
+            
+            response += f"## {group.title() if isinstance(group, str) else 'Comparison Group'}\n"
+            response += f"- Number of projects: {len(items)}"
+            response += f"\n- Total investment: ₱{total_cost:,.2f}"
+            response += f"\n- Average project cost: ₱{avg_cost:,.2f}"
+            
+            # Add a sample project
+            if items:
+                sample = items[0]
+                response += f"\n- Sample project: {sample.get('ProjectDescription', 'A flood control project')} "
+                response += f"in {sample.get('Municipality', 'an unspecified location')}, "
+                response += f"{sample.get('Province', 'an unspecified province')} "
+                response += f"(₱{float(sample.get('ContractCost', 0)):,.2f})"
+            
+            response += "\n\n"
+        
+        # Add a closing note if there are many groups
+        if len(comparison_groups) > 3:
+            response += "This is a high-level comparison. "
+            response += "Would you like me to provide more details about any specific group?"
+        
+        return response
     
     def _format_general_response(self, query: str, records: List[Dict[str, Any]]) -> str:
-        """Format general response for other queries."""
-        response_parts = [
-            f"# 🔍 Search Results",
-            f"**📊 Found {len(records)} flood control projects**",
-            ""
-        ]
+        """Generate a natural language response for general queries about flood control projects."""
+        if not records:
+            return "I couldn't find any projects matching your query. Could you try being more specific or check your search terms?"
         
-        for i, record in enumerate(records[:5], 1):
-            response_parts.append(f"## {i}. {record.get('ProjectDescription', 'Unknown Project')}")
-            response_parts.append(f"**📍 Location:** {record.get('Municipality', 'N/A')}, {record.get('Province', 'N/A')}")
-            response_parts.append(f"**🔧 Type:** {record.get('TypeofWork', 'N/A')}")
-            response_parts.append(f"**💰 Contract Cost:** ₱{float(record.get('ContractCost', 0)):,.2f}")
-            response_parts.append(f"**🏗️ Contractor:** {record.get('Contractor', 'N/A')}")
-            response_parts.append(f"**📅 Completion Year:** {record.get('CompletionYear', 'N/A')}")
-            response_parts.append("")
+        # Start building the response
+        response = f"I found {len(records)} flood control project{'s' if len(records) != 1 else ''} "
+        response += f"related to your query. Here's a summary:\n\n"
         
-        if len(records) > 5:
-            response_parts.append(f"*Showing top 5 results out of {len(records)} found.*")
-            response_parts.append("")
+        # Group by location if there are multiple locations
+        locations = {}
+        for record in records:
+            loc_key = (record.get('Municipality'), record.get('Province'))
+            if loc_key not in locations:
+                locations[loc_key] = []
+            locations[loc_key].append(record)
         
-        return "\n".join(response_parts)
+        # If all projects are in the same location, mention it once
+        if len(locations) == 1:
+            loc_name = f"{list(locations.keys())[0][0] if list(locations.keys())[0][0] else 'various locations'}, {list(locations.keys())[0][1] if list(locations.keys())[0][1] else 'various provinces'}"
+            response += f"All projects are located in {loc_name}. "
+        else:
+            response += f"These projects span {len(locations)} different locations. "
+        
+        # Add cost information if available
+        total_cost = sum(float(r.get('ContractCost', 0)) for r in records if r.get('ContractCost'))
+        if total_cost > 0:
+            response += f"The total investment across all projects is approximately ₱{total_cost:,.2f}. "
+            
+            avg_cost = total_cost / len(records)
+            response += f"The average project cost is around ₱{avg_cost:,.2f}.\n\n"
+        
+        # Add project highlights
+        response += "Here are some notable projects:\n\n"
+        
+        for i, record in enumerate(records[:3], 1):
+            project_desc = record.get('ProjectDescription', 'A flood control project')
+            location = f"{record.get('Municipality', 'an unspecified location')}, {record.get('Province', 'an unspecified province')}"
+            cost = float(record.get('ContractCost', 0))
+            contractor = record.get('Contractor')
+            year = record.get('CompletionYear')
+            
+            response += f"{i}. {project_desc} in {location} "
+            response += f"(₱{cost:,.2f}) "
+            
+            if contractor and contractor.lower() != 'n/a':
+                response += f"by {contractor} "
+            if year and str(year).strip() and str(year).lower() != 'n/a':
+                response += f"(Completed: {year})"
+                
+            response += "\n"
+        
+        # Add a note about additional results
+        if len(records) > 3:
+            response += f"\nThere are {len(records) - 3} more projects available. "
+            response += "Would you like me to provide more details about any specific project?"
+        
+        return response
     
     def _format_metadata_response(self, query: str, records: List[Dict[str, Any]]) -> str:
-        """Format response for metadata and system queries."""
+        """Generate a natural language overview of the dataset's metadata."""
         if not records:
-            return "No metadata information available."
+            return "I couldn't retrieve any metadata about the dataset at the moment."
         
         metadata = records[0]
-        response_parts = ["# 📊 Dataset Information", ""]
+        response = "Here's what I can tell you about the flood control projects dataset:\n\n"
         
         # Basic dataset statistics
-        if 'total_projects' in metadata:
-            response_parts.append("## 📈 Dataset Overview")
-            response_parts.append(f"**📊 Total Projects:** {metadata['total_projects']:,}")
-            response_parts.append(f"**📋 Total Columns:** {metadata.get('total_columns', 'N/A')}")
-            response_parts.append("")
+        total_projects = metadata.get('total_projects', 0)
+        total_investment = float(metadata.get('total_investment', 0))
         
-        # Geographic coverage
-        if any(key in metadata for key in ['unique_regions', 'unique_provinces', 'unique_municipalities']):
-            response_parts.append("## 🌍 Geographic Coverage")
-            if 'unique_regions' in metadata:
-                response_parts.append(f"**🏛️ Regions:** {metadata['unique_regions']}")
-            if 'unique_provinces' in metadata:
-                response_parts.append(f"**🏙️ Provinces:** {metadata['unique_provinces']}")
-            if 'unique_municipalities' in metadata:
-                response_parts.append(f"**🏘️ Municipalities:** {metadata['unique_municipalities']}")
-            response_parts.append("")
+        response += f"The dataset contains information on {total_projects:,} flood control projects "
         
-        # Contractor information
-        if 'unique_contractors' in metadata:
-            response_parts.append("## 🏗️ Contractor Information")
-            response_parts.append(f"**👷 Unique Contractors:** {metadata['unique_contractors']}")
-            response_parts.append("")
+        # Add time coverage if available
+        if 'earliest_year' in metadata and 'latest_year' in metadata:
+            response += f"carried out between {metadata['earliest_year']} and {metadata['latest_year']}. "
         
-        # Date range
-        if 'date_range_start' in metadata and 'date_range_end' in metadata:
-            response_parts.append("## 📅 Timeline Coverage")
-            start_year = metadata['date_range_start']
-            end_year = metadata['date_range_end']
-            if start_year and end_year:
-                response_parts.append(f"**📅 Year Range:** {start_year} - {end_year}")
-                response_parts.append(f"**⏱️ Coverage Period:** {end_year - start_year + 1} years")
-            response_parts.append("")
+        if total_investment > 0:
+            response += f"The total investment across all projects is approximately ₱{total_investment:,.2f}. "
+            
+            # Add average project cost
+            if total_projects > 0:
+                avg_cost = total_investment / total_projects
+                response += f"On average, each project costs around ₱{avg_cost:,.2f}.\n\n"
         
-        # Specific query responses
-        if 'unique_infra_types' in metadata:
-            response_parts.append("## 🔧 Infrastructure Types")
+        # Add infrastructure types if available
+        if 'unique_infra_types' in metadata and metadata['unique_infra_types']:
             infra_types = metadata['unique_infra_types']
-            if infra_types:
-                for i, infra_type in enumerate(infra_types[:10], 1):
-                    response_parts.append(f"{i}. {infra_type}")
-            response_parts.append("")
+            response += "\n**Types of Infrastructure:**\n"
+            for i, infra_type in enumerate(infra_types[:10], 1):
+                response += f"- {infra_type}"
+                if i < len(infra_types[:10]):
+                    response += "\n"
         
-        if 'unique_contractors_list' in metadata:
-            response_parts.append("## 🏗️ All Contractors")
+        # Add contractors information if available
+        if 'unique_contractors_list' in metadata and metadata['unique_contractors_list']:
             contractors = metadata['unique_contractors_list']
-            if contractors:
-                response_parts.append(f"**Total:** {len(contractors)} contractors")
-                response_parts.append("**Sample contractors:**")
-                for i, contractor in enumerate(contractors[:10], 1):
-                    response_parts.append(f"{i}. {contractor}")
-                if len(contractors) > 10:
-                    response_parts.append(f"*... and {len(contractors) - 10} more contractors*")
-            response_parts.append("")
+            response += f"\n\nThe dataset includes {len(contractors)} different contractors. "
+            
+            if len(contractors) > 10:
+                response += f"Here are some of the main contractors: {', '.join(contractors[:5])}."
+                if len(contractors) > 5:
+                    response += f" There are {len(contractors) - 5} additional contractors in the dataset."
         
-        # Data quality information
-        if 'missing_data_summary' in metadata:
+        # Add data quality information if available
+        if 'missing_data_summary' in metadata and metadata['missing_data_summary']:
             missing_data = metadata['missing_data_summary']
             if any(count > 0 for count in missing_data.values()):
-                response_parts.append("## ⚠️ Data Quality")
-                response_parts.append("**Columns with missing data:**")
+                response += "\n\n**Data Quality Notes:**\n"
+                response += "Some data points are missing in the following fields:\n"
                 for column, missing_count in missing_data.items():
                     if missing_count > 0:
                         percentage = (missing_count / metadata.get('total_projects', 1)) * 100
+                        response += f"- {column}: {missing_count} projects ({percentage:.1f}%) missing data\n"
+        
+        # Add a helpful closing
+        response += "\nWhat specific aspect of the dataset would you like to explore further?"
+        
+        return response
     
     def _format_analysis_response(self, query: str, records: List[Dict[str, Any]]) -> str:
-        """Format response for analysis and insights queries."""
+        """Generate a natural language response for analysis and insights queries."""
         if not records:
-            return "No analysis data available."
+            return "I couldn't find any analysis results for your query. Could you try rephrasing or asking about something else?"
         
         analysis = records[0]
-        response_parts = ["# 📊 Analysis & Insights", ""]
+        response = "Here are some insights based on your query:\n\n"
         
         # Distribution analysis
-        if 'region_distribution' in analysis:
-            response_parts.append("## 🌍 Project Distribution by Region")
+        if 'region_distribution' in analysis and analysis['region_distribution']:
             region_dist = analysis['region_distribution']
             total_projects = sum(region_dist.values())
             
-            response_parts.append(f"**📊 Total Projects Analyzed:** {total_projects:,}")
-            response_parts.append("")
+            response += f"I've analyzed {total_projects:,} projects across different regions. "
             
-            # Sort regions by project count
+            # Sort regions by number of projects
             sorted_regions = sorted(region_dist.items(), key=lambda x: x[1], reverse=True)
             
-            for i, (region, count) in enumerate(sorted_regions[:10], 1):
-                percentage = (count / total_projects) * 100
-                response_parts.append(f"**{i}. {region}**")
-                response_parts.append(f"   📊 Projects: {count:,} ({percentage:.1f}%)")
-                response_parts.append("")
-        
-        if 'province_distribution' in analysis:
-            response_parts.append("## 🏙️ Top Provinces by Project Count")
-            province_dist = analysis['province_distribution']
-            
-            for i, (province, count) in enumerate(province_dist.items(), 1):
-                response_parts.append(f"**{i}. {province}:** {count:,} projects")
-            response_parts.append("")
-        
-        if 'year_distribution' in analysis:
-            response_parts.append("## 📅 Projects by Completion Year")
-            year_dist = analysis['year_distribution']
-            
-            # Sort by year
-            sorted_years = sorted(year_dist.items())
-            
-            for year, count in sorted_years:
-                if year and str(year) != 'nan':
-                    response_parts.append(f"**{int(year)}:** {count:,} projects")
-            response_parts.append("")
-        
-        # Funding trend analysis
-        if 'funding_trend' in analysis:
-            response_parts.append("## 💰 Funding Trend Analysis")
-            funding_trend = analysis['funding_trend']
-            
-            # Sort by year
-            sorted_funding = sorted(funding_trend.items())
-            total_funding = sum(funding_trend.values())
-            
-            response_parts.append(f"**💰 Total Investment:** ₱{total_funding:,.2f}")
-            response_parts.append("")
-            
-            response_parts.append("**📈 Year-by-Year Breakdown:**")
-            for year, amount in sorted_funding:
-                if year and str(year) != 'nan':
-                    percentage = (amount / total_funding) * 100 if total_funding > 0 else 0
-                    response_parts.append(f"• **{int(year)}:** ₱{amount:,.2f} ({percentage:.1f}%)")
-            response_parts.append("")
-        
-        # Top analysis
-        if 'top_expensive_projects' in analysis:
-            response_parts.append("## 💰 Most Expensive Projects")
-            top_projects = analysis['top_expensive_projects']
-            
-            for i, project in enumerate(top_projects, 1):
-                cost = project.get('ContractCost', 0)
-                description = project.get('ProjectDescription', 'Unknown Project')
-                location = f"{project.get('Municipality', 'N/A')}, {project.get('Province', 'N/A')}"
+            if len(sorted_regions) > 0:
+                top_region, top_count = sorted_regions[0]
+                response += f"The region with the most projects is {top_region} with {top_count} projects. "
                 
-                response_parts.append(f"### {i}. {description}")
-                response_parts.append(f"**📍 Location:** {location}")
-                response_parts.append(f"**💰 Cost:** ₱{cost:,.2f}")
-                response_parts.append("")
-        
-        if 'top_contractors' in analysis:
-            response_parts.append("## 🏗️ Top Contractors by Project Count")
-            top_contractors = analysis['top_contractors']
+                if len(sorted_regions) > 1:
+                    bottom_region, bottom_count = sorted_regions[-1]
+                    if bottom_count < top_count:  # Only show if there's a difference
+                        response += f"In contrast, {bottom_region} has the fewest projects with just {bottom_count}. "
             
-            for i, (contractor, count) in enumerate(top_contractors.items(), 1):
-                response_parts.append(f"**{i}. {contractor}:** {count} projects")
-            response_parts.append("")
+            response += "\n\n**Project Distribution by Region:**\n"
+            
+            # Show top 5 regions
+            for i, (region, count) in enumerate(sorted_regions[:5], 1):
+                percentage = (count / total_projects) * 100
+                response += f"- {region}: {count} projects ({percentage:.1f}% of total)\n"
+            
+            if len(sorted_regions) > 5:
+                response += f"- ... and {len(sorted_regions) - 5} other regions\n"
+            
+        # Cost analysis
+        if 'cost_analysis' in analysis and analysis['cost_analysis']:
+            cost_data = analysis['cost_analysis']
+            
+            response += "**Cost Analysis**\n"
+            
+            if 'average_cost' in cost_data:
+                response += f"- The average project costs approximately ₱{float(cost_data['average_cost']):,.2f}. "
+                
+                if 'min_cost' in cost_data and 'max_cost' in cost_data:
+                    response += f"Project costs range from ₱{float(cost_data['min_cost']):,.2f} to ₱{float(cost_data['max_cost']):,.2f}. "
+                    
+                    # Add context about the range
+                    cost_ratio = float(cost_data['max_cost']) / float(cost_data['min_cost']) if float(cost_data['min_cost']) > 0 else 0
+                    if cost_ratio > 100:
+                        response += "There's significant variation in project costs. "
+                    elif cost_ratio > 10:
+                        response += "Project costs vary considerably. "
+                    
+                response += "\n"
+            
+            if 'total_investment' in cost_data:
+                response += f"- Total investment across all projects is approximately ₱{float(cost_data['total_investment']):,.2f}.\n"
+            
+            response += "\n"
         
-        return "\n".join(response_parts)
+        # Completion time analysis
+        if 'completion_analysis' in analysis and analysis['completion_analysis']:
+            completion_data = analysis['completion_analysis']
+            response += "**Project Completion Times**\n"
+            
+            if 'average_duration_days' in completion_data:
+                avg_days = float(completion_data['average_duration_days'])
+                avg_months = avg_days / 30.44
+                avg_years = avg_days / 365.25
+                
+                if avg_days < 30:
+                    duration_str = f"{avg_days:.1f} days"
+                elif avg_days < 365:
+                    duration_str = f"{avg_months:.1f} months"
+                else:
+                    duration_str = f"{avg_years:.1f} years"
+                
+                response += f"- Projects take {duration_str} to complete on average. "
+                
+                if 'min_duration_days' in completion_data and 'max_duration_days' in completion_data:
+                    min_days = float(completion_data['min_duration_days'])
+                    max_days = float(completion_data['max_duration_days'])
+                    
+                    # Format min duration
+                    if min_days < 30:
+                        min_str = f"{min_days:.0f} days"
+                    elif min_days < 365:
+                        min_str = f"{min_days/30.44:.1f} months"
+                    else:
+                        min_str = f"{min_days/365.25:.1f} years"
+                    
+                    # Format max duration
+                    if max_days < 30:
+                        max_str = f"{max_days:.0f} days"
+                    elif max_days < 365:
+                        max_str = f"{max_days/30.44:.1f} months"
+                    else:
+                        max_str = f"{max_days/365.25:.1f} years"
+                    
+                    response += f"Completion times range from {min_str} to {max_str}. "
+                    
+                    # Add context about the range
+                    if max_days / min_days > 10 and min_days > 0:
+                        response += "This wide range suggests that project complexity varies significantly. "
+                
+                response += "\n\n"
+        
+        # Province distribution
+        if 'province_distribution' in analysis and analysis['province_distribution']:
+            province_dist = analysis['province_distribution']
+            sorted_provinces = sorted(province_dist.items(), key=lambda x: x[1], reverse=True)
+            
+            response += "**Project Distribution by Province**\n"
+            response += f"Projects are distributed across {len(sorted_provinces)} provinces. "
+            
+            if len(sorted_provinces) >= 3:
+                top_provinces = ", ".join([f"{p[0]} ({p[1]} projects)" for p in sorted_provinces[:3]])
+                response += f"The top provinces are {top_provinces}. "
+                
+                # Add context about the distribution
+                top_3_total = sum(p[1] for p in sorted_provinces[:3])
+                percentage = (top_3_total / sum(province_dist.values())) * 100
+                response += f"These account for {percentage:.1f}% of all projects. "
+            
+            response += "\n\n"
+        
+        # Yearly trends
+        if 'year_distribution' in analysis and analysis['year_distribution']:
+            year_dist = analysis['year_distribution']
+            sorted_years = sorted(year_dist.items(), key=lambda x: x[0])
+            
+            # Only proceed if we have meaningful year data
+            if len(sorted_years) > 1:
+                response += "**Yearly Project Trends**\n"
+                
+                # Find the year with most projects
+                max_year, max_count = max(year_dist.items(), key=lambda x: x[1])
+                min_year, min_count = min(year_dist.items(), key=lambda x: x[1])
+                
+                response += f"- The year with the most projects was {max_year} with {max_count} projects. "
+                
+                # Calculate year-over-year changes
+                yearly_changes = []
+                for i in range(1, len(sorted_years)):
+                    prev_year, prev_count = sorted_years[i-1]
+                    curr_year, curr_count = sorted_years[i]
+                    change = ((curr_count - prev_count) / prev_count) * 100 if prev_count > 0 else 0
+                    yearly_changes.append((f"{prev_year}-{curr_year}", change))
+                
+                # Add trend information if we have enough data
+                if len(yearly_changes) > 0:
+                    avg_change = sum(c[1] for c in yearly_changes) / len(yearly_changes)
+                    if abs(avg_change) > 5:  # Only mention if there's a significant trend
+                        trend = "increasing" if avg_change > 0 else "decreasing"
+                        response += f"On average, the number of projects has been {trend} by {abs(avg_change):.1f}% annually. "
+                
+                response += "\n\n"
+        
+        # Add a closing note
+        response += "Would you like me to explore any specific aspect of this analysis in more detail?"
+        
+        return response
     
     def _generate_no_results_response(self, query: str) -> str:
         """Generate helpful response when no results are found."""
-        return f"""## ❌ No Results Found
+        return f"""## No Results Found
 
-I couldn't find any flood control projects matching your query: **"{query}"**
+I couldn't find any flood control projects matching your query: "{query}"
 
 ### 💡 Try These Suggestions:
 - **Check spelling** of location names (e.g., "Cebu City", "Manila", "Davao")
