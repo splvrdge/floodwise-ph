@@ -2,6 +2,8 @@ import logging
 import os
 import sys
 from pathlib import Path
+from http import HTTPStatus
+from flask import Flask, Response
 
 # Add the parent directory to the path so we can import from the project modules
 sys.path.append(str(Path(__file__).parent.absolute()))
@@ -13,6 +15,19 @@ from llm_handler import LLMHandler
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Create a simple Flask app for health checks
+app = Flask(__name__)
+
+@app.route('/healthz')
+def health_check():
+    """Health check endpoint for load balancers."""
+    return Response("OK", status=HTTPStatus.OK, content_type='text/plain')
+
+# Run the Flask app in a separate thread if this is the main module
+if __name__ == '__main__':
+    import threading
+    threading.Thread(target=app.run, kwargs={'host': '0.0.0.0', 'port': 8080}, daemon=True).start()
 
 def load_dataset(handler=None, logger=None):
     """Try to load the dataset from common locations."""

@@ -11,6 +11,7 @@ python-Levenshtein>=0.12.2,<1.0.0  # For faster fuzzy matching
 # Web framework
 streamlit>=1.24.0,<2.0.0  # Pin to major version 1
 flask>=2.0.0,<3.0.0  # For health check endpoint
+waitress>=2.0.0,<3.0.0  # Production WSGI server
 
 # Utilities
 python-dotenv>=1.0.0,<2.0.0

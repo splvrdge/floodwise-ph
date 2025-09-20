@@ -12,10 +12,9 @@ fileWatcherType = "none"
 enableStaticServing = true
 enableWebsocketCompression = false
 
-# Enable built-in health checks
-[server.health]
-enabled = true
-path = "/healthz"
+# Simple health check using static file
+[server]
+healthCheckPath = "/healthz"
 
 [runner]
 magicEnabled = true
