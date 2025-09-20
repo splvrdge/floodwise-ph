@@ -500,26 +500,141 @@ sufficient information to fully answer the question, please indicate what inform
         return "\n".join(response_parts)
     
     def _format_project_type_response(self, query: str, records: List[Dict[str, Any]]) -> str:
-        """Format response for project type queries."""
-        response_parts = ["# 🔧 Project Type Analysis", ""]
+        """
+        Format response for project type queries with comprehensive categorization.
         
-        # Get unique project types
-        project_types = set(r.get('TypeofWork', 'N/A') for r in records)
-        if len(project_types) > 1:
-            response_parts.append(f"**📊 Project Types Found:** {', '.join(project_types)}")
-            response_parts.append("")
+        Args:
+            query: The original user query
+            records: List of project records matching the query
+            
+        Returns:
+            Formatted response string with categorized project types
+        """
+        if not records:
+            return "I couldn't find any information about project types in the database."
+            
+        response = ["# 🌊 Types of Flood Control Projects\n"]
         
-        for i, record in enumerate(records[:5], 1):
-            response_parts.append(f"## {i}. {record.get('ProjectDescription', 'Unknown Project')}")
-            response_parts.append(f"**🔧 Type of Work:** {record.get('TypeofWork', 'N/A')}")
-            response_parts.append(f"**🏗️ Infrastructure Type:** {record.get('infra_type', 'N/A')}")
-            response_parts.append(f"**📍 Location:** {record.get('Municipality', 'N/A')}, {record.get('Province', 'N/A')}")
-            response_parts.append(f"**💰 Contract Cost:** ₱{float(record.get('ContractCost', 0)):,.2f}")
-            response_parts.append(f"**🏗️ Contractor:** {record.get('Contractor', 'N/A')}")
-            response_parts.append(f"**📅 Completion Year:** {record.get('CompletionYear', 'N/A')}")
-            response_parts.append("")
+        # Categorize projects into standard flood control types
+        project_categories = {
+            'Structural Measures': {
+                'Flood Walls and Levees': [],
+                'Retention/Detention Basins': [],
+                'River Channel Improvements': [],
+                'Drainage Systems': [],
+                'Coastal Protection': []
+            },
+            'Non-Structural Measures': {
+                'Flood Forecasting Systems': [],
+                'Watershed Management': [],
+                'Floodplain Mapping': [],
+                'Community Awareness Programs': []
+            },
+            'Other Projects': []
+        }
         
-        return "\n".join(response_parts)
+        # Categorize each project based on keywords in the project name or description
+        for record in records:
+            project_desc = str(record.get('ProjectDescription', '')).lower()
+            project_type = str(record.get('TypeofWork', '')).lower()
+            
+            # Check for structural measures
+            if any(term in project_desc + ' ' + project_type for term in ['wall', 'levee', 'dike', 'embankment']):
+                project_categories['Structural Measures']['Flood Walls and Levees'].append(record)
+            elif any(term in project_desc + ' ' + project_type for term in ['basin', 'retention', 'detention']):
+                project_categories['Structural Measures']['Retention/Detention Basins'].append(record)
+            elif any(term in project_desc + ' ' + project_type for term in ['river', 'channel', 'dredg', 'bank protection']):
+                project_categories['Structural Measures']['River Channel Improvements'].append(record)
+            elif any(term in project_desc + ' ' + project_type for term in ['drain', 'culvert', 'sewer']):
+                project_categories['Structural Measures']['Drainage Systems'].append(record)
+            elif any(term in project_desc + ' ' + project_type for term in ['coast', 'shore', 'beach', 'mangrove']):
+                project_categories['Structural Measures']['Coastal Protection'].append(record)
+                
+            # Check for non-structural measures
+            elif any(term in project_desc + ' ' + project_type for term in ['forecast', 'monitor', 'early warning']):
+                project_categories['Non-Structural Measures']['Flood Forecasting Systems'].append(record)
+            elif any(term in project_desc + ' ' + project_type for term in ['watershed', 'reforestation', 'catchment']):
+                project_categories['Non-Structural Measures']['Watershed Management'].append(record)
+            elif any(term in project_desc + ' ' + project_type for term in ['mapping', 'survey', 'study']):
+                project_categories['Non-Structural Measures']['Floodplain Mapping'].append(record)
+            elif any(term in project_desc + ' ' + project_type for term in ['training', 'awareness', 'education', 'workshop']):
+                project_categories['Non-Structural Measures']['Community Awareness Programs'].append(record)
+                
+            # If no category matches, add to other projects
+            else:
+                project_categories['Other Projects'].append(record)
+        
+        # Build the response with categorized projects
+        for category, subcategories in project_categories.items():
+            has_items = any(subcategories.values()) if isinstance(subcategories, dict) else bool(subcategories)
+            
+            if has_items:
+                response.append(f"## {category}\n")
+                
+                if isinstance(subcategories, dict):
+                    for subcategory, projects in subcategories.items():
+                        if projects:
+                            response.append(f"### {subcategory}")
+                            for i, project in enumerate(projects[:3], 1):  # Show up to 3 examples per subcategory
+                                response.append(f"{i}. **{project.get('ProjectDescription', 'Unnamed Project')}**")
+                                if 'Municipality' in project or 'Province' in project:
+                                    location = f"{project.get('Municipality', '')}, {project.get('Province', '')}".strip(', ')
+                                    if location:
+                                        response.append(f"   📍 {location}")
+                                if 'ContractCost' in project:
+                                    try:
+                                        cost = float(project.get('ContractCost', 0))
+                                        response.append(f"   💰 Contract Cost: ₱{cost:,.2f}")
+                                    except (ValueError, TypeError):
+                                        pass
+                                if 'Contractor' in project:
+                                    response.append(f"   🏗️ Contractor: {project['Contractor']}")
+                                response.append("")
+                            
+                            # Add a note if there are more projects in this category
+                            if len(projects) > 3:
+                                response.append(f"   *... and {len(projects) - 3} more {subcategory.lower()} projects*\n")
+                            else:
+                                response.append("")
+                else:
+                    # Handle uncategorized projects
+                    for i, project in enumerate(subcategories[:5], 1):  # Limit to 5 uncategorized projects
+                        response.append(f"{i}. **{project.get('ProjectDescription', 'Unnamed Project')}**")
+                        if 'TypeofWork' in project:
+                            response.append(f"   🔧 Type: {project['TypeofWork']}")
+                        if 'Municipality' in project or 'Province' in project:
+                            location = f"{project.get('Municipality', '')}, {project.get('Province', '')}".strip(', ')
+                            if location:
+                                response.append(f"   📍 {location}")
+                        if 'ContractCost' in project:
+                            try:
+                                cost = float(project.get('ContractCost', 0))
+                                response.append(f"   💰 Contract Cost: ₱{cost:,.2f}")
+                            except (ValueError, TypeError):
+                                pass
+                        response.append("")
+                    
+                    if len(subcategories) > 5:
+                        response.append(f"*... and {len(subcategories) - 5} more uncategorized projects*\n")
+                
+                response.append("---\n")
+        
+        # Add a summary of project counts
+        total_projects = sum(len(projects) for subcategories in project_categories.values() 
+                           for projects in (subcategories.values() if isinstance(subcategories, dict) else [subcategories]))
+        
+        response.append(f"### 📊 Summary of Project Types")
+        for category, subcategories in project_categories.items():
+            if isinstance(subcategories, dict):
+                count = sum(len(projects) for projects in subcategories.values())
+            else:
+                count = len(subcategories)
+            if count > 0:
+                response.append(f"- **{category}**: {count} projects")
+        
+        response.append("\n*Note: Project categorization is based on keywords in project names and descriptions. Some projects may appear in multiple categories.*")
+        
+        return "\n".join(response)
     
     def _format_location_response(self, query: str, records: List[Dict[str, Any]]) -> str:
         """Format response for location-based queries."""
@@ -771,10 +886,6 @@ sufficient information to fully answer the question, please indicate what inform
                 for column, missing_count in missing_data.items():
                     if missing_count > 0:
                         percentage = (missing_count / metadata.get('total_projects', 1)) * 100
-                        response_parts.append(f"• **{column}:** {missing_count:,} missing ({percentage:.1f}%)")
-                response_parts.append("")
-        
-        return "\n".join(response_parts)
     
     def _format_analysis_response(self, query: str, records: List[Dict[str, Any]]) -> str:
         """Format response for analysis and insights queries."""

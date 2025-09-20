@@ -76,6 +76,99 @@ class FloodControlDataHandler:
                 
         return stats
     
+    def _standardize_text(self, text: str) -> str:
+        """Standardize text by converting to lowercase and removing extra whitespace."""
+        if pd.isna(text):
+            return ''
+        return ' '.join(str(text).strip().lower().split())
+
+    def _extract_project_type(self, description: str) -> str:
+        """Extract and standardize project type from description."""
+        if pd.isna(description):
+            return 'Other'
+            
+        description = description.lower()
+        
+        # Define project type patterns
+        type_patterns = {
+            'flood_control': r'flood control|flood mitigation|river control|riverbank protection|dike|levee|embankment',
+            'drainage': r'drainage|culvert|canal|waterway|catch basin',
+            'bridge': r'bridge|footbridge|viaduct',
+            'road': r'road|highway|pavement|asphalt|concrete',
+            'retention': r'retention basin|detention pond|catchment',
+            'seawall': r'seawall|shoreline|coastal protection',
+            'slope': r'slope protection|erosion control|landslide',
+            'pump': r'pump|pumping station',
+            'floodgate': r'floodgate|tide gate',
+            'revetment': r'revetment|riprap|gabion'
+        }
+        
+        # Check for each pattern
+        for type_name, pattern in type_patterns.items():
+            if re.search(pattern, description):
+                return type_name
+                
+        return 'other'
+
+    def _parse_cost(self, cost_str: str) -> float:
+        """Parse cost string into numeric value."""
+        if pd.isna(cost_str):
+            return 0.0
+            
+        # Handle numeric values
+        if isinstance(cost_str, (int, float)):
+            return float(cost_str)
+            
+        # Clean the string
+        cost_str = str(cost_str).lower().replace('₱', '').replace(',', '').strip()
+        
+        # Handle currency abbreviations
+        multiplier = 1.0
+        if 'm' in cost_str or 'million' in cost_str:
+            multiplier = 1000000
+            cost_str = cost_str.replace('m', '').replace('million', '')
+        elif 'b' in cost_str or 'billion' in cost_str:
+            multiplier = 1000000000
+            cost_str = cost_str.replace('b', '').replace('billion', '')
+        elif 'k' in cost_str or 'thousand' in cost_str:
+            multiplier = 1000
+            cost_str = cost_str.replace('k', '').replace('thousand', '')
+            
+        # Extract numeric value
+        try:
+            return float(re.sub(r'[^0-9.]', '', cost_str)) * multiplier
+        except (ValueError, TypeError):
+            return 0.0
+
+    def _parse_date(self, date_str, date_format=None):
+        """Parse date string into datetime object with flexible format handling."""
+        if pd.isna(date_str):
+            return None
+            
+        if isinstance(date_str, (int, float)) and not pd.isna(date_str):
+            # Handle Unix timestamp (in milliseconds)
+            try:
+                return datetime.fromtimestamp(date_str / 1000)
+            except (ValueError, TypeError):
+                return None
+                
+        # Try parsing with common date formats
+        date_formats = [
+            '%m/%d/%Y', '%Y-%m-%d', '%d-%b-%y', '%b %d, %Y', 
+            '%d/%m/%Y', '%Y/%m/%d', '%m-%d-%Y'
+        ]
+        
+        if date_format:
+            date_formats.insert(0, date_format)
+            
+        for fmt in date_formats:
+            try:
+                return datetime.strptime(str(date_str).strip(), fmt)
+            except (ValueError, TypeError):
+                continue
+                
+        return None
+
     def _process_loaded_data(self, source_description: str) -> bool:
         """Process loaded data regardless of source."""
         try:
@@ -83,18 +176,54 @@ class FloodControlDataHandler:
             if self.df.empty:
                 st.error(f"The {source_description} is empty.")
                 return False
-                
-            # Identify text columns for search
-            self.text_columns = self.df.select_dtypes(include=['object']).columns.tolist()
+            
+            # Standardize text columns
+            text_columns = self.df.select_dtypes(include=['object']).columns.tolist()
+            for col in text_columns:
+                self.df[col] = self.df[col].apply(self._standardize_text)
+            
+            # Add standardized location columns
+            self.df['location_standard'] = self.df['Municipality'].fillna('') + ', ' + \
+                                         self.df['Province'].fillna('') + ', ' + \
+                                         self.df['Region'].fillna('')
+            
+            # Extract and standardize project types
+            self.df['project_type'] = self.df['ProjectDescription'].apply(self._extract_project_type)
+            
+            # Parse costs
+            cost_columns = [col for col in self.df.columns if 'cost' in col.lower() or 'abc' in col.lower()]
+            for col in cost_columns:
+                self.df[f'{col}_numeric'] = self.df[col].apply(self._parse_cost)
+            
+            # Parse dates
+            date_columns = [col for col in self.df.columns if 'date' in col.lower() or 'year' in col.lower()]
+            for col in date_columns:
+                if 'year' in col.lower() and self.df[col].dtype == 'object':
+                    # Extract year from string if needed
+                    self.df[col] = self.df[col].str.extract(r'(\d{4})', expand=False)
+                self.df[f'{col}_parsed'] = self.df[col].apply(self._parse_date)
             
             # Create searchable text by combining all text columns
+            self.text_columns = text_columns
             self._prepare_search_index()
+            
+            # Cache unique values for filtering
+            self._cache_unique_values()
             
             return True
             
         except Exception as e:
             st.error(f"Error processing data from {source_description}: {str(e)}")
+            import traceback
+            st.error(traceback.format_exc())
             return False
+            
+    def _cache_unique_values(self):
+        """Cache unique values for filtering."""
+        self.unique_values_cache = {}
+        for col in self.df.columns:
+            if self.df[col].nunique() < 1000:  # Only cache for columns with reasonable number of unique values
+                self.unique_values_cache[col] = self.df[col].dropna().unique().tolist()
     
     def _prepare_search_index(self):
         """Prepare TF-IDF index for semantic search."""
@@ -122,6 +251,12 @@ class FloodControlDataHandler:
         """
         Search for records most relevant to the query with intelligent processing.
         
+        This method implements a multi-stage search strategy:
+        1. Parse the query for location, year, and other filters
+        2. Apply filters to narrow down the dataset
+        3. Classify the query type
+        4. Route to appropriate handler for final results
+        
         Args:
             query: The search query
             top_k: Maximum number of results to return (default: 10)
@@ -132,61 +267,123 @@ class FloodControlDataHandler:
         if self.df is None or self.vectorizer is None or not query.strip():
             return []
             
-        # Parse the query for number of results requested
-        import re
-        num_match = re.search(r'(?:show|list|top|first|get)\s+(?:me\s+)?(\d+)(?:\s+results?)?', query, re.IGNORECASE)
-        if num_match:
-            try:
-                top_k = min(int(num_match.group(1)), 50)  # Cap at 50 results for performance
-            except (ValueError, IndexError):
-                pass
-        
         try:
+            # Parse the query for number of results requested
+            import re
+            num_match = re.search(
+                r'(?:show|list|top|first|get)\s+(?:me\s+)?(\d+)(?:\s+results?)?', 
+                query, 
+                re.IGNORECASE
+            )
+            if num_match:
+                try:
+                    top_k = min(int(num_match.group(1)), 50)  # Cap at 50 results for performance
+                except (ValueError, IndexError):
+                    pass
+            
             query_lower = query.lower()
+            
+            # Extract location and year information from the query
+            location = self._extract_location(query_lower)
+            year = self._extract_year(query_lower)
+            date_range = self._extract_years(query_lower)
+            
+            # If we have a date range but not a specific year, use the date range
+            if date_range[0] is not None and year is None:
+                year = date_range[0]  # For backward compatibility
+            
+            # Start with the full dataset
             filtered_df = self.df.copy()
             
-            # Extract location mentions
-            location = self._extract_location(query_lower)
+            # Apply location filter if specified
             if location:
-                filtered_df = self._filter_by_location(filtered_df, location)
-                # If location filtering returns no results, fall back to full dataset
-                if filtered_df.empty:
-                    filtered_df = self.df.copy()
+                location_filtered = self._filter_by_location(filtered_df, location)
+                if not location_filtered.empty:
+                    filtered_df = location_filtered
             
-            # Extract year mentions
-            year = self._extract_year(query_lower)
-            if year:
-                year_filtered = self._filter_by_year(filtered_df, year)
-                # Only apply year filter if it returns results
+            # Apply year/date range filter if specified
+            if date_range[0] is not None or year is not None:
+                year_filtered = self._filter_by_year(
+                    filtered_df, 
+                    year=year, 
+                    date_range=date_range if date_range[0] is not None else None
+                )
                 if not year_filtered.empty:
                     filtered_df = year_filtered
             
-            # Handle different query types
+            # If no results after filtering, try relaxing the filters one by one
+            if filtered_df.empty:
+                # Try with just location
+                if location:
+                    location_filtered = self._filter_by_location(self.df, location)
+                    if not location_filtered.empty:
+                        filtered_df = location_filtered
+                
+                # If still no results, try with just year/date range
+                if filtered_df.empty and (date_range[0] is not None or year is not None):
+                    year_filtered = self._filter_by_year(
+                        self.df,
+                        year=year,
+                        date_range=date_range if date_range[0] is not None else None
+                    )
+                    if not year_filtered.empty:
+                        filtered_df = year_filtered
+                
+                # If still no results, try semantic search on the full dataset
+                if filtered_df.empty:
+                    print("No results found with filters, falling back to semantic search")
+                    return self._semantic_search(self.df, query, top_k)
+            
+            # Classify the query type based on the filtered results
             query_type = self._classify_query(query_lower)
             
-            if query_type == 'cost_analysis':
-                return self._handle_cost_queries(filtered_df, query_lower, top_k)
-            elif query_type == 'contractor_analysis':
-                return self._handle_contractor_queries(filtered_df, query_lower, top_k)
-            elif query_type == 'completion_analysis':
-                return self._handle_completion_queries(filtered_df, query_lower, top_k)
-            elif query_type == 'project_type_analysis':
-                return self._handle_project_type_queries(filtered_df, query_lower, top_k)
-            elif query_type == 'location_analysis':
-                return self._handle_location_queries(filtered_df, query_lower, top_k)
-            elif query_type == 'comparison':
-                return self._handle_comparison_queries(filtered_df, query_lower, top_k)
-            elif query_type == 'metadata_analysis':
-                return self._handle_metadata_queries(filtered_df, query_lower, top_k)
-            elif query_type == 'analysis_insights':
-                return self._handle_analysis_queries(filtered_df, query_lower, top_k)
-            else:
-                # Default semantic search
+            # Route to appropriate handler based on query type
+            handler_map = {
+                'cost_analysis': self._handle_cost_queries,
+                'contractor_analysis': self._handle_contractor_queries,
+                'completion_analysis': self._handle_completion_queries,
+                'project_type_analysis': self._handle_project_type_queries,
+                'location_analysis': self._handle_location_queries,
+                'comparison': self._handle_comparison_queries,
+                'metadata_analysis': self._handle_metadata_queries,
+                'analysis_insights': self._handle_analysis_queries
+            }
+            
+            # Get the appropriate handler function
+            handler = handler_map.get(query_type, self._semantic_search)
+            
+            try:
+                # Try the primary handler first
+                results = handler(filtered_df, query, top_k)
+                
+                # If no results from the handler, try semantic search as fallback
+                if not results and query_type != 'general':
+                    print(f"No results from {query_type} handler, falling back to semantic search")
+                    results = self._semantic_search(filtered_df, query, top_k)
+                
+                # If we still have no results, try relaxing all filters
+                if not results and (location or year is not None or date_range[0] is not None):
+                    print("No results with current filters, trying without filters")
+                    return self._semantic_search(self.df, query, top_k)
+                
+                return results
+                
+            except Exception as e:
+                print(f"Error in {query_type} handler: {str(e)}")
+                print("Falling back to semantic search")
                 return self._semantic_search(filtered_df, query, top_k)
             
         except Exception as e:
-            st.error(f"Error searching records: {str(e)}")
-            return []
+            print(f"Error in search_relevant_records: {str(e)}")
+            import traceback
+            print(traceback.format_exc())
+            
+            # As a last resort, try a simple semantic search
+            try:
+                return self._semantic_search(self.df, query, top_k)
+            except Exception as e2:
+                print(f"Error in fallback semantic search: {str(e2)}")
+                return []
     
     def _extract_location(self, query: str) -> str:
         """Extract location mentions from query."""
@@ -231,115 +428,427 @@ class FloodControlDataHandler:
         years = re.findall(r'\b(20[0-9]{2})\b', query)
         return int(years[0]) if years else None
     
+    def _normalize_location_name(self, name: str) -> str:
+        """Normalize location names for consistent matching."""
+        if pd.isna(name):
+            return ''
+            
+        # Common replacements and normalizations
+        replacements = {
+            'city of ': '',
+            'city': '',
+            'municipality of ': '',
+            'mun. of ': '',
+            'province of ': '',
+            'prov. of ': '',
+            'north': 'n',
+            'south': 's',
+            'east': 'e',
+            'west': 'w',
+            'northern': 'n',
+            'southern': 's',
+            'eastern': 'e',
+            'western': 'w',
+            'st.': 'saint',
+            'mt.': 'mount',
+            'ft.': 'fort'
+        }
+        
+        name = str(name).strip().lower()
+        
+        # Apply replacements
+        for old, new in replacements.items():
+            name = name.replace(old.lower(), new.lower())
+            
+        # Remove special characters and extra spaces
+        name = re.sub(r'[^\w\s]', ' ', name)
+        name = re.sub(r'\s+', ' ', name).strip()
+        
+        # Standardize region names
+        region_mapping = {
+            'ncr': 'national capital region',
+            'car': 'cordillera administrative region',
+            'armm': 'autonomous region in muslim mindanao',
+            'barmm': 'bangsamoro autonomous region in muslim mindanao'
+        }
+        
+        for abbr, full in region_mapping.items():
+            if name == abbr.lower() or name == full.lower():
+                return full.lower()
+                
+        # Standardize province names
+        province_mapping = {
+            'cotabato (north cotabato)': 'north cotabato',
+            'cotabato': 'north cotabato',
+            'davao del norte': 'davao del norte',
+            'davao del sur': 'davao del sur',
+            'davao oriental': 'davao oriental',
+            'davao de oro': 'davao de oro',
+            'davao occidental': 'davao occidental'
+        }
+        
+        return province_mapping.get(name, name)
+
+    def _is_location_match(self, text: str, search_terms: list) -> bool:
+        """Check if text matches any of the search terms with fuzzy matching."""
+        if pd.isna(text):
+            return False
+            
+        text = str(text).lower()
+        
+        for term in search_terms:
+            # Exact match
+            if term.lower() == text:
+                return True
+                
+            # Substring match
+            if term.lower() in text or text in term.lower():
+                return True
+                
+            # Fuzzy matching for slight misspellings
+            if fuzz.token_sort_ratio(term.lower(), text) > 85:  # 85% similarity threshold
+                return True
+                
+            # Check for common abbreviations
+            if len(term) > 3 and len(text) > 3:  # Only for terms longer than 3 chars
+                if fuzz.ratio(term[:4].lower(), text[:4].lower()) > 90:  # Check first 4 chars
+                    return True
+                    
+        return False
+
     def _filter_by_location(self, df: pd.DataFrame, location: str) -> pd.DataFrame:
-        """Filter dataframe by location with flexible matching."""
-        # Create multiple search patterns for better matching
-        search_patterns = [location]
+        """
+        Filter dataframe by location with flexible and precise matching.
         
-        # Add variations for common city names
-        if location == 'cebu city':
-            search_patterns.extend(['cebu city', 'cebu', 'capital.*cebu'])
-        elif location == 'davao city':
-            search_patterns.extend(['davao city', 'davao', 'capital.*davao'])
-        elif location == 'manila':
-            search_patterns.extend(['manila', 'metro manila', 'ncr'])
-        elif location == 'region xii':
-            search_patterns.extend(['region xii', 'region 12', 'soccsksargen'])
+        Args:
+            df: DataFrame to filter
+            location: Location name to filter by (can be city, municipality, province, or region)
+            
+        Returns:
+            Filtered DataFrame containing only matching locations
+        """
+        if df.empty or not location or not isinstance(location, str):
+            return df
+            
+        # Normalize the search location
+        location = self._normalize_location_name(location)
         
-        # Create combined mask for all patterns
-        location_mask = pd.Series([False] * len(df), index=df.index)
+        # If no location after normalization, return empty DataFrame
+        if not location:
+            return pd.DataFrame()
+            
+        # Create a copy to avoid SettingWithCopyWarning
+        df_filtered = df.copy()
         
-        for pattern in search_patterns:
-            try:
-                pattern_mask = (
-                    df['Municipality'].str.contains(pattern, case=False, na=False, regex=True) |
-                    df['Province'].str.contains(pattern, case=False, na=False, regex=True) |
-                    df['Region'].str.contains(pattern, case=False, na=False, regex=True)
-                )
-                location_mask = location_mask | pattern_mask
-            except Exception:
-                # Skip problematic patterns
-                continue
+        # Get location hierarchy (region > province > city/municipality > barangay)
+        location_columns = ['Region', 'Province', 'Municipality', 'Barangay', 'City']
+        available_columns = [col for col in location_columns if col in df_filtered.columns]
         
-        return df[location_mask]
+        # Create search terms with variations
+        search_terms = [location]
+        
+        # Add common location variations
+        location_variations = {
+            'manila': ['ncr', 'metro manila', 'national capital region'],
+            'cebu': ['cebu city', 'metro cebu'],
+            'davao': ['davao city', 'davao del sur'],
+            'cotabato': ['north cotabato'],
+            'ilocos': ['ilocos norte', 'ilocos sur'],
+            'leyte': ['southern leyte', 'northern leyte'],
+            'samar': ['eastern samar', 'western samar', 'northern samar']
+        }
+        
+        # Add variations if the location is a key in our variations dictionary
+        for key, variations in location_variations.items():
+            if key in location.lower():
+                search_terms.extend(variations)
+        
+        # Remove duplicates while preserving order
+        search_terms = list(dict.fromkeys(search_terms))
+        
+        # Create a mask for matches
+        location_mask = pd.Series([False] * len(df_filtered), index=df_filtered.index)
+        
+        # Check each location column for matches
+        for col in available_columns:
+            # Check for matches in this column
+            col_mask = df_filtered[col].apply(
+                lambda x: self._is_location_match(x, search_terms)
+            )
+            location_mask = location_mask | col_mask
+        
+        # Also check the standardized location column if it exists
+        if 'location_standard' in df_filtered.columns:
+            std_mask = df_filtered['location_standard'].apply(
+                lambda x: any(term in str(x).lower() for term in search_terms)
+            )
+            location_mask = location_mask | std_mask
+        
+        # Filter the dataframe
+        result = df_filtered[location_mask].copy()
+        
+        # If we have coordinates, we can also do geospatial search
+        if 'Latitude' in df_filtered.columns and 'Longitude' in df_filtered.columns:
+            # This is a placeholder - you would implement actual geocoding here
+            pass
+            
+        return result
     
-    def _filter_by_year(self, df: pd.DataFrame, year: int) -> pd.DataFrame:
-        """Filter dataframe by year."""
-        year_mask = (
-            (df['CompletionYear'] == year) |
-            (df['FundingYear'] == year) |
-            (df['InfraYear'] == year)
-        )
-        return df[year_mask]
+    def _extract_years(self, query: str) -> tuple:
+        """
+        Extract year or year range from query.
+        
+        Args:
+            query: The search query
+            
+        Returns:
+            tuple: (start_year, end_year) - If a single year, both will be the same.
+                   Returns (None, None) if no year is found.
+        """
+        import re
+        
+        # Look for year ranges (e.g., 2020-2023, 2020 to 2023)
+        range_patterns = [
+            r'(\d{4})\s*[-–]\s*(\d{4})',  # 2020-2023 or 2020 - 2023
+            r'from\s+(\d{4})\s+to\s+(\d{4})',  # from 2020 to 2023
+            r'between\s+(\d{4})\s+and\s+(\d{4})',  # between 2020 and 2023
+        ]
+        
+        for pattern in range_patterns:
+            match = re.search(pattern, query, re.IGNORECASE)
+            if match:
+                try:
+                    start_year = int(match.group(1))
+                    end_year = int(match.group(2))
+                    return (min(start_year, end_year), max(start_year, end_year))
+                except (ValueError, IndexError):
+                    continue
+        
+        # Look for relative year references
+        current_year = datetime.now().year
+        relative_patterns = [
+            (r'last\s+(\d+)\s+years?', lambda y: (current_year - y, current_year - 1)),
+            (r'past\s+(\d+)\s+years?', lambda y: (current_year - y, current_year - 1)),
+            (r'next\s+(\d+)\s+years?', lambda y: (current_year, current_year + y - 1)),
+            (r'this\s+year', lambda _: (current_year, current_year)),
+            (r'last\s+year', lambda _: (current_year - 1, current_year - 1)),
+        ]
+        
+        for pattern, func in relative_patterns:
+            match = re.search(pattern, query, re.IGNORECASE)
+            if match:
+                try:
+                    if match.groups():
+                        years = int(match.group(1))
+                        return func(years)
+                    return func(None)
+                except (ValueError, IndexError):
+                    continue
+        
+        # Look for a single year
+        year_match = re.search(r'\b(20\d{2})\b', query)
+        if year_match:
+            try:
+                year = int(year_match.group(1))
+                return (year, year)
+            except (ValueError, IndexError):
+                pass
+                
+        return (None, None)
+
+    def _filter_by_year(self, df: pd.DataFrame, year: int, date_range: tuple = None) -> pd.DataFrame:
+        """
+        Filter dataframe by year or date range with flexible handling.
+        
+        Args:
+            df: DataFrame to filter
+            year: Single year to filter by (deprecated, use date_range instead)
+            date_range: Optional tuple of (start_year, end_year) for range filtering
+            
+        Returns:
+            Filtered DataFrame containing only records within the specified year/range
+        """
+        if df.empty:
+            return df
+            
+        # Create a copy to avoid SettingWithCopyWarning
+        df_filtered = df.copy()
+        
+        # Define possible date/year column names (case insensitive)
+        date_columns = [
+            'CompletionDate', 'StartDate', 'Date', 'CompletionDate_parsed', 'StartDate_parsed'
+        ]
+        year_columns = [
+            'CompletionYear', 'FundingYear', 'InfraYear', 'Year', 'ProjectYear', 'FiscalYear'
+        ]
+        
+        # Find which columns exist in the dataframe
+        existing_date_columns = [col for col in date_columns if col in df_filtered.columns]
+        existing_year_columns = [col for col in year_columns if col in df_filtered.columns]
+        
+        # If no date/year columns found, return empty DataFrame
+        if not existing_date_columns and not existing_year_columns:
+            return pd.DataFrame()
+        
+        # Determine the year range to filter by
+        if date_range and len(date_range) == 2:
+            start_year, end_year = date_range
+        elif year:
+            start_year = end_year = year
+        else:
+            return df_filtered  # No year filter to apply
+        
+        # Create a mask for year matches
+        year_mask = pd.Series([False] * len(df_filtered), index=df_filtered.index)
+        
+        # First, try to filter by date columns if available
+        for col in existing_date_columns:
+            # Skip if the column is all null
+            if df_filtered[col].isnull().all():
+                continue
+                
+            # Handle parsed datetime columns
+            if col.endswith('_parsed'):
+                # Filter by date range
+                if start_year and end_year:
+                    start_date = datetime(start_year, 1, 1)
+                    end_date = datetime(end_year, 12, 31, 23, 59, 59)
+                    col_mask = (df_filtered[col] >= start_date) & (df_filtered[col] <= end_date)
+                    year_mask = year_mask | col_mask
+            else:
+                # Try to extract years from string dates
+                year_series = df_filtered[col].astype(str).str.extract(r'(\d{4})')[0]
+                year_series = pd.to_numeric(year_series, errors='coerce')
+                if start_year == end_year:
+                    col_mask = (year_series == start_year)
+                else:
+                    col_mask = (year_series >= start_year) & (year_series <= end_year)
+                year_mask = year_mask | col_mask
+        
+        # If we didn't find any date columns or no matches, try year columns
+        if not year_mask.any() and existing_year_columns:
+            for col in existing_year_columns:
+                # Convert to numeric, coercing errors to NaN
+                year_series = pd.to_numeric(df_filtered[col], errors='coerce')
+                
+                # Filter by year range
+                if start_year == end_year:
+                    col_mask = (year_series == start_year)
+                else:
+                    col_mask = (year_series >= start_year) & (year_series <= end_year)
+                
+                year_mask = year_mask | col_mask
+        
+        # Apply the filter
+        return df_filtered[year_mask] if year_mask.any() else pd.DataFrame()
     
     def _classify_query(self, query: str) -> str:
-        """Classify the type of query to determine processing approach."""
-        # Metadata/system queries (highest priority)
+        """
+        Classify the type of query to determine the appropriate processing approach.
+        
+        Args:
+            query: The user's query in lowercase
+            
+        Returns:
+            str: The query type classification
+        """
+        # Extract location and year first, as they're common across many query types
+        location = self._extract_location(query)
+        year = self._extract_year(query)
+        
+        # Check for location or year-specific queries first
+        has_location = location is not None
+        has_year = year is not None
+        
+        # Location-specific queries (high priority)
+        location_terms = [
+            'in ', 'at ', 'location', 'region', 'province', 'city', 'municipality', 
+            'barangay', 'where', 'near', 'around', 'area', 'district', 'zone'
+        ]
+        if has_location or any(term in query for term in location_terms):
+            # If the query is specifically about locations (e.g., 'list locations', 'cities with projects')
+            if any(term in query for term in ['list locations', 'cities with', 'municipalities in', 'provinces with']):
+                return 'location_analysis'
+            # If the query is about projects in a specific location
+            elif has_location or any(term in query for term in ['projects in', 'flood control in', 'drainage in']):
+                return 'location_analysis'
+        
+        # Year-specific queries (high priority)
+        year_terms = ['in 20', 'year ', 'completed in', 'started in', 'funded in', 'during ', 'since ', 'from ']
+        if has_year or any(term in query for term in year_terms):
+            if any(term in query for term in ['completed in', 'finished in', 'delivered in']):
+                return 'completion_analysis'
+            elif any(term in query for term in ['started in', 'begun in', 'initiated in']):
+                return 'completion_analysis'
+            elif has_year or any(term in query for term in ['in 20', 'during ', 'since ', 'from ']):
+                return 'analysis_insights'
+        
+        # Metadata/system queries (high priority)
         if any(term in query for term in ['how many total', 'total projects', 'dataset', 'unique values', 'missing data', 'columns', 'fields']):
             return 'metadata_analysis'
         
         # Analysis/insights queries (high priority)  
-        if any(term in query for term in ['distribution', 'trend', 'growth', 'statistics', 'insights']):
+        if any(term in query for term in ['distribution', 'trend', 'growth', 'statistics', 'insights', 'analyze', 'analysis']):
             return 'analysis_insights'
-        
-        # Contractor-related queries (check first for priority)
-        contractor_terms = [
-            'contractor', 'company', 'builder', 'construction', 'who built', 
-            'who constructed', 'top contractor', 'most projects', 'which contractor',
-            'built by', 'constructed by', 'developer', 'firm'
-        ]
-        if any(term in query for term in contractor_terms):
-            return 'contractor_analysis'
-        
-        # Cost-related queries (expanded patterns)
+            
+        # Cost-related queries (high priority)
         cost_terms = [
-            'expensive', 'cost', 'budget', 'price', 'amount', 'million', 'billion', 
-            'cheapest', 'affordable', 'average', 'spending', 'investment',
-            'least', 'lowest', 'smallest', 'minimum', 'maximum', 'highest', 'most',
-            'low budget', 'high budget', 'low cost', 'high cost'
+            'cost', 'price', 'budget', 'expensive', 'cheap', 'affordable', 
+            'funding', 'allocation', 'amount', '₱', 'PHP', 'pesos', 'million', 'billion'
         ]
         if any(term in query for term in cost_terms):
             return 'cost_analysis'
-        
-        # Time/completion-related queries (expanded patterns)
-        time_terms = [
-            'completed', 'finished', 'done', 'completion', 'when', 'recent', 
-            'latest', 'oldest', 'first', 'last', 'year', 'date', 'timeline',
-            'started', 'began', 'ongoing', 'in progress'
+            
+        # Contractor-related queries
+        contractor_terms = [
+            'contractor', 'company', 'firm', 'awarded to', 'implemented by', 
+            'constructed by', 'built by', 'contractor name', 'who built', 'who constructed'
         ]
-        if any(term in query for term in time_terms):
+        if any(term in query for term in contractor_terms):
+            return 'contractor_analysis'
+            
+        # Completion status queries
+        status_terms = [
+            'completed', 'ongoing', 'in progress', 'status', 'progress', 
+            'finished', 'delivered', 'implemented', 'current state', 'phase', 'stage'
+        ]
+        time_terms = [
+            'this year', 'last year', 'recent', 'latest', 'newest', 'oldest',
+            'recently', 'when was', 'date', 'timeframe', 'schedule'
+        ]
+        if any(term in query for term in status_terms) or any(term in query for term in time_terms):
             return 'completion_analysis'
         
-        # Project type queries (expanded patterns)
+        # Project type queries
         type_terms = [
             'type', 'kind', 'drainage', 'bridge', 'seawall', 'revetment', 
             'mitigation', 'flood control', 'pumping', 'embankment', 'dike',
-            'canal', 'culvert', 'slope protection', 'river control'
+            'canal', 'culvert', 'slope protection', 'river control',
+            'category', 'categories', 'classify', 'types of', 'kinds of',
+            'what kind', 'what type', 'classification', 'project category'
         ]
         if any(term in query for term in type_terms):
             return 'project_type_analysis'
-        
-        # Location-based queries (expanded patterns)
-        location_terms = [
-            'where', 'location', 'region', 'province', 'city', 'municipality', 
-            'how many', 'count', 'number of', 'investment', 'total cost',
-            'in', 'at', 'near', 'around', 'barangay', 'area'
-        ]
-        if any(term in query for term in location_terms):
-            return 'location_analysis'
-        
-        # Comparison queries (expanded patterns)
+            
+        # Comparison queries
         comparison_terms = [
-            'compare', 'vs', 'versus', 'difference', 'between', 'comparison',
-            'better', 'worse', 'more than', 'less than', 'against'
+            'compare', 'vs', 'versus', 'difference', 'similar', 'contrast', 
+            'compared to', 'versus', 'versus.', 'vs.', 'difference between',
+            'which is better', 'which one', 'versus others', 'versus other'
         ]
         if any(term in query for term in comparison_terms):
             return 'comparison'
-        
-        
+            
+        # If we have a location but no other clear classification
+        if has_location:
+            return 'location_analysis'
+            
+        # If we have a year but no other clear classification
+        if has_year:
+            return 'analysis_insights'
+            
         # Default to general search
-        else:
-            return 'general'
+        return 'general'
     
     def _handle_cost_queries(self, df: pd.DataFrame, query: str, top_k: int) -> List[Dict[str, Any]]:
         """Handle cost-related queries."""
