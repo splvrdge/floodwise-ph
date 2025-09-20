@@ -488,56 +488,36 @@ def render_quick_questions():
     pass
 
 def main():
-    """Main application function with error handling."""
-    try:
-        # Enhanced Header with better typography and icons
+    """Main application function."""
+    # Enhanced Header with better typography and icons
+    st.markdown("""
+    <div style="text-align: center; margin-bottom: 2rem;">
+        <h1 style="margin-bottom: 0.5rem;">🌊 FloodWise PH</h1>
+        <p style="font-size: 1.2rem; color: var(--text-secondary); margin-bottom: 0;">
+            <strong>🇵🇭 Philippines Flood Control Intelligence Platform</strong>
+        </p>
+        <p style="color: var(--text-muted); margin-top: 0.5rem;">
+            💡 Projects • 🏗️ Contractors • 💰 Costs • 📍 Locations • 🛡️ Mitigation Works
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # Sidebar for data information and configuration
+    render_mobile_sidebar()
+    
+    # Main chat interface
+    if not st.session_state.data_loaded:
         st.markdown("""
-        <div style="text-align: center; margin-bottom: 2rem;">
-            <h1 style="margin-bottom: 0.5rem;">🌊 FloodWise PH</h1>
-            <p style="font-size: 1.2rem; color: var(--text-secondary); margin-bottom: 0;">
-                <strong>🇵🇭 Philippines Flood Control Intelligence Platform</strong>
-            </p>
-            <p style="color: var(--text-muted); margin-top: 0.5rem;">
-                💡 Projects • 🏗️ Contractors • 💰 Costs • 📍 Locations • 🛡️ Mitigation Works
-            </p>
+        <div class="status-error">
+            ❌ Dataset could not be loaded. Please check if the dataset file exists in the Dataset folder.
         </div>
         """, unsafe_allow_html=True)
         
-        # Sidebar for data information and configuration
-        render_mobile_sidebar()
-        
-        # Main chat interface
-        if not st.session_state.data_loaded:
-            st.markdown("""
-            <div class="status-error">
-                ❌ Dataset could not be loaded. Please check if the dataset file exists in the Dataset folder.
-            </div>
-            """, unsafe_allow_html=True)
-            
-            st.info("💡 Expected file: `Dataset/flood-control-projects-table_2025-09-20.csv`")
-            
-            # Show sample questions in mobile-friendly format
-            with st.expander("💡 Sample Questions (Available when dataset is loaded)", expanded=True):
-                sample_questions = [
-                "What flood control projects are in Region IV-B?",
-                "Show me all projects in Palawan province",
-                "Which contractor has completed the most projects?",
-                "What are the most expensive flood control projects?",
-                "Show me projects completed in 2024",
-                "What types of flood mitigation works are included?",
-                "Which projects involve drainage system construction?",
-                "Show me projects with contract costs over 50 million pesos",
-                "What projects are implemented in Puerto Princesa City?",
-                "Which district engineering offices have the most projects?"
-            ]
-            
-                for question in sample_questions:
-                    st.write(f"• {question}")
-            
-            return
-        
-        # Sample Questions Section (when data is loaded)
-        if not st.session_state.chat_history:  # Only show when no chat history
+        st.info("💡 Expected file: `Dataset/flood-control-projects-table_2025-09-20.csv`")
+        return
+    
+    # Sample Questions Section (when data is loaded)
+    if not st.session_state.chat_history:  # Only show when no chat history
         # Organize sample questions by category with better icons
         sample_categories = {
             "💰 Cost & Budget": [
@@ -681,16 +661,7 @@ def main():
             
             st.rerun()
     
-        # Advanced data exploration removed per user request
-
-    except Exception as e:
-        st.error(f"An error occurred: {str(e)}")
-        st.markdown("""
-        <div class="status-error">
-            ❌ <strong>Application Error</strong><br>
-            The application encountered an unexpected error. Please refresh the page and try again.
-        </div>
-        """, unsafe_allow_html=True)
+    # Advanced data exploration removed per user request
 
 def show_footer():
     """Display enhanced footer with cohesive design."""
