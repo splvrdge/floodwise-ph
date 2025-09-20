@@ -7,23 +7,32 @@ from llm_handler import LLMHandler
 
 def load_dataset(handler=None, logger=None):
     """Try to load the dataset from common locations."""
-    if handler is None or logger is None:
-        dataset_paths = [
-            "Dataset/flood-control-projects-table_2025-09-20.csv",
-            "./Dataset/flood-control-projects-table_2025-09-20.csv",
-            os.path.join(os.path.dirname(__file__), "Dataset", "flood-control-projects-table_2025-09-20.csv"),
-        ]
-        for path in dataset_paths:
-            if os.path.exists(path):
-                try:
-                    if handler.load_csv_from_path(path):
-                        # Set loaded flag
-                        logger.info(f"Successfully loaded dataset from {path}")
-                        return True
-                except Exception as e:
-                    logger.error(f"Error loading dataset from {path}: {str(e)}")
-                    continue
-    return False  # Default return if handler is None
+    if handler is None:
+        if 'data_handler' in st.session_state:
+            handler = st.session_state.data_handler
+        else:
+            return False
+    
+    if logger is None:
+        logger = logging.getLogger(__name__)
+        
+    dataset_paths = [
+        "Dataset/flood-control-projects-table_2025-09-20.csv",
+        "./Dataset/flood-control-projects-table_2025-09-20.csv",
+        os.path.join(os.path.dirname(__file__), "Dataset", "flood-control-projects-table_2025-09-20.csv"),
+    ]
+    
+    for path in dataset_paths:
+        if os.path.exists(path):
+            try:
+                if handler.load_csv_from_path(path):
+                    logger.info(f"Successfully loaded dataset from {path}")
+                    st.session_state.data_loaded = True
+                    return True
+            except Exception as e:
+                logger.error(f"Error loading dataset from {path}: {str(e)}")
+                continue
+    return False
 
 # Components
 def sidebar():
@@ -38,43 +47,51 @@ def sidebar():
         if 'data_loaded' not in st.session_state:
             st.session_state.data_loaded = False
             
-        if st.session_state.data_loaded:
-            try:
+        try:
+            if st.session_state.data_loaded:
                 # Verify data_handler has data before calling get_summary_stats
                 if hasattr(st.session_state.data_handler, 'df') and st.session_state.data_handler.df is not None:
-                    stats = st.session_state.data_handler.get_summary_stats()
-                    st.markdown(
-                        f"<div class='status success'>✅ Loaded {stats.get('total_records', 0):,} records<br>"
-                        f"📋 {len(stats.get('columns', []))} columns<br>"
-                        f"🌏 {stats.get('unique_regions', 0)} regions<br>"
-                        f"📅 {stats.get('date_range', 'N/A')}</div>",
-                        unsafe_allow_html=True,
-                    )
+                    try:
+                        stats = st.session_state.data_handler.get_summary_stats()
+                        st.markdown(
+                            f"<div class='status success'>✅ Loaded {stats.get('total_records', 0):,} records<br>"
+                            f"📋 {len(stats.get('columns', []))} columns<br>"
+                            f"🌏 {stats.get('unique_regions', 0)} regions<br>"
+                            f"📅 {stats.get('date_range', 'N/A')}</div>",
+                            unsafe_allow_html=True,
+                        )
+                    except Exception as e:
+                        st.markdown(f"<div class='status error'>❌ Error getting stats: {str(e)[:100]}</div>", unsafe_allow_html=True)
                 else:
                     st.markdown("<div class='status warn'>⚠️ No data available</div>", unsafe_allow_html=True)
-            except Exception as e:
-                st.markdown(f"<div class='status error'>❌ Error: {str(e)[:100]}</div>", unsafe_allow_html=True)
-        else:
-            st.markdown("<div class='status warn'>⚠️ Dataset not loaded</div>", unsafe_allow_html=True)
-            uploaded = st.file_uploader("Upload CSV", type=['csv'])
-            if uploaded and st.button("Load"):
-                try:
-                    if st.session_state.data_handler.load_csv(uploaded):
-                        # Set loaded flag
-                        st.session_state.data_loaded = True
-                        st.rerun()
-                except Exception as e:
-                    st.error(f"Error loading file: {str(e)}")
-                    st.session_state.data_loaded = False
-
-        st.markdown("### 🤖 AI")
-        try:
-            if st.session_state.llm_handler.is_available():
-                st.markdown("<div class='status success'>✅ AI Model Ready</div>", unsafe_allow_html=True)
             else:
-                st.markdown("<div class='status warn'>⚠️ Basic mode (no AI)</div>", unsafe_allow_html=True)
+                st.markdown("<div class='status warn'>⚠️ Dataset not loaded</div>", unsafe_allow_html=True)
+                uploaded = st.file_uploader("Upload CSV", type=['csv'])
+                if uploaded and st.button("Load"):
+                    try:
+                        if st.session_state.data_handler.load_csv(uploaded):
+                            st.session_state.data_loaded = True
+                            st.rerun()
+                        else:
+                            st.error("Failed to load the uploaded file.")
+                    except Exception as e:
+                        st.error(f"Error loading file: {str(e)}")
+                        st.session_state.data_loaded = False
+
+            st.markdown("### 🤖 AI")
+            if 'llm_handler' in st.session_state:
+                try:
+                    if st.session_state.llm_handler.is_available():
+                        st.markdown("<div class='status success'>✅ AI Model Ready</div>", unsafe_allow_html=True)
+                    else:
+                        st.markdown("<div class='status warn'>⚠️ Basic mode (no AI)</div>", unsafe_allow_html=True)
+                except Exception as e:
+                    st.markdown("<div class='status error'>❌ AI Service Error</div>", unsafe_allow_html=True)
+            else:
+                st.markdown("<div class='status warn'>⚠️ AI not initialized</div>", unsafe_allow_html=True)
+                
         except Exception as e:
-            st.markdown("<div class='status error'>❌ AI Service Unavailable</div>", unsafe_allow_html=True)
+            st.error(f"An unexpected error occurred: {str(e)}")
 
 def chat_ui():
     """Display the chat interface and handle user interactions."""
@@ -138,26 +155,21 @@ def footer():
 
 def initialize_handlers():
     """Initialize data and LLM handlers with error handling."""
-    try:
-        # Initialize data handler if not exists
-        if 'data_handler' not in st.session_state:
-            st.session_state.data_handler = FloodControlDataHandler()
-            
-        # Initialize LLM handler if not exists
-        if 'llm_handler' not in st.session_state:
-            st.session_state.llm_handler = LLMHandler(prefer_local=True)
-            
-        # Initialize chat history if not exists
-        if 'chat_history' not in st.session_state:
-            st.session_state.chat_history = []
-            
-        # Set data_loaded flag if not exists
-        if 'data_loaded' not in st.session_state:
-            st.session_state.data_loaded = False
-            
-    except Exception as e:
-        st.error(f"Failed to initialize: {str(e)}")
-        st.stop()
+    # Initialize data handler if not exists
+    if 'data_handler' not in st.session_state:
+        st.session_state.data_handler = FloodControlDataHandler()
+        
+    # Initialize LLM handler if not exists
+    if 'llm_handler' not in st.session_state:
+        st.session_state.llm_handler = LLMHandler(prefer_local=True)
+        
+    # Initialize chat history if not exists
+    if 'chat_history' not in st.session_state:
+        st.session_state.chat_history = []
+        
+    # Set data_loaded flag if not exists
+    if 'data_loaded' not in st.session_state:
+        st.session_state.data_loaded = False
 
 def main():
     """Main application function."""
@@ -169,16 +181,22 @@ def main():
         initial_sidebar_state="expanded"
     )
     
-    # Initialize with error handling
-    initialize_handlers()
+    try:
+        # Initialize with error handling
+        initialize_handlers()
+        
+        # Try to load dataset automatically if not already loaded
+        if not st.session_state.get('data_loaded', False):
+            if not load_dataset(st.session_state.data_handler, st.session_state.get('logger', logging.getLogger(__name__))):
+                st.warning("Please load the dataset using the sidebar.")
+        
+        # Main layout
+        st.title("🌊 Flood Control Projects Assistant")
+        st.caption("Ask me about flood control projects in the Philippines")
     
-    # Try to load dataset automatically
-    if not load_dataset():
-        st.warning("Please load the dataset using the sidebar.")
-    
-    # Main layout
-    st.title("🌊 Flood Control Projects Assistant")
-    st.caption("Ask me about flood control projects in the Philippines")
+    except Exception as e:
+        st.error(f"An error occurred: {str(e)}")
+        st.stop()
     
     # Sidebar
     with st.sidebar:
@@ -202,8 +220,10 @@ def main():
                     st.session_state.data_loaded = True
                     st.success("Dataset loaded successfully!")
                     st.rerun()
+                return False, None  # Success
             except Exception as e:
                 st.error(f"Error loading file: {str(e)}")
+                return False, str(e)
         
         # Clear chat history
         if st.button("Clear Chat History", use_container_width=True):
