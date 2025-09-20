@@ -134,35 +134,33 @@ def chat_ui():
             try:
                 # Parse the query for number of results requested
                 num_match = re.search(r'(?:show|list|top|first|get)\s+(?:me\s+)?(\d+)(?:\s+results?)?', query, re.IGNORECASE)
-                top_k = 10  # Default number of results
+                num_results = int(num_match.group(1)) if num_match else 5
                 
-                if num_match:
-                    try:
-                        top_k = min(int(num_match.group(1)), 50)  # Cap at 50 results for performance
-                        print(f"Found number in query: {top_k}")
-                    except (ValueError, IndexError) as e:
-                        print(f"Error parsing number from query: {e}")
-                        pass
+                # Search for relevant records
+                results = st.session_state.data_handler.search_relevant_records(query, limit=num_results)
                 
-                print(f"Searching for: {query}")
-                records = st.session_state.data_handler.search_relevant_records(query, top_k=top_k)
-                print(f"Found {len(records)} records")
+                # Generate response
+                response = st.session_state.llm_handler.generate_response(
+                    query=query,
+                    results=results
+                )
                 
-                context = st.session_state.data_handler.get_summary_stats()
-                print("Got summary stats")
+                # Display response
+                st.markdown(response)
                 
-                print("Generating response...")
-                answer = st.session_state.llm_handler.generate_response(query, records, context)
-                print("Response generated")
-                
-                st.session_state.chat_history.append((query, answer))
-                st.rerun()
+                # Add to chat history
+                st.session_state.chat_history.append({
+                    "role": "assistant", 
+                    "content": response
+                })
                 
             except Exception as e:
-                error_details = traceback.format_exc()
-                print(f"Error in chat_ui: {error_details}")
-                st.session_state.chat_history.append((query, f"I'm sorry, I encountered an error: {str(e)}\n\nPlease try rephrasing your question or try again later."))
-                st.rerun()
+                error_msg = f"I encountered an error: {str(e)}"
+                st.error(error_msg)
+                st.session_state.chat_history.append({
+                    "role": "assistant", 
+                    "content": error_msg
+                })
 
 def footer():
     st.markdown(
@@ -172,14 +170,34 @@ def footer():
     )
 
 # Main
+def initialize_handlers():
+    """Initialize LLM and data handlers with error handling."""
+    try:
+        if 'llm_handler' not in st.session_state:
+            with st.spinner("Initializing AI model..."):
+                st.session_state.llm_handler = LLMHandler(prefer_local=True)
+                
+        if 'data_handler' not in st.session_state:
+            with st.spinner("Loading project data..."):
+                st.session_state.data_handler = FloodControlDataHandler()
+                st.session_state.data_handler.load_data()
+                
+        if 'chat_history' not in st.session_state:
+            st.session_state.chat_history = []
+            
+    except Exception as e:
+        st.error(f"Failed to initialize: {str(e)}")
+        st.stop()
+
 def main():
-    # Initialize session state variables if they don't exist
-    if 'data_handler' not in st.session_state:
-        st.session_state.data_handler = FloodControlDataHandler()
-    if 'data_loaded' not in st.session_state:
-        st.session_state.data_loaded = False
-    if 'chat_history' not in st.session_state:
-        st.session_state.chat_history = []
+    st.set_page_config(
+        page_title="Flood Control Projects Assistant", 
+        layout="wide",
+        initial_sidebar_state="expanded"
+    )
+    
+    # Initialize with error handling
+    initialize_handlers()
     if 'llm_handler' not in st.session_state:
         st.session_state.llm_handler = LLMHandler()
 

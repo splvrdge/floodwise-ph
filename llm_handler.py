@@ -113,237 +113,37 @@ class LLMHandler:
             self.client = None
             self.model_type = None
     
-    def detect_query_type(self, query: str) -> QueryType:
-        """
-        Determine the type of the user query using a hybrid approach.
+    def detect_query_type(self, query: str) -> str:
+        """Detect the type of query to determine response format."""
+        query = query.lower()
         
-        Args:
-            query: The user's input query
-            
-        Returns:
-            QueryType: The detected type of query
-        """
-        if not query or not query.strip():
-            return QueryType.GENERAL_CONVERSATION
-            
-        query_lower = query.lower().strip()
-        
-        # First check for general conversation patterns
-        if any(phrase in query_lower.split() for phrase in ["hi", "hello", "hey", "greetings"]):
-            return QueryType.GENERAL_CONVERSATION
-            
-        # Check for how are you and similar greetings
-        if any(phrase in query_lower for phrase in ["how are you", "what's up", "how's it going"]):
-            return QueryType.GENERAL_CONVERSATION
-            
-        # Check for thanks/bye patterns
-        if any(phrase in query_lower for phrase in ["thank", "thanks", "bye", "goodbye"]):
-            return QueryType.GENERAL_CONVERSATION
-            
-        # Check for flood control related queries
-        flood_terms = ["flood", "drainage", "project", "contract", "contractor", 
-                      "location", "region", "province", "municipality", "cost",
-                      "budget", "construction", "mitigation"]
-                      
-        if any(term in query_lower for term in flood_terms):
-            # Check if it's a data analysis query
-            analysis_terms = ["analyze", "analysis", "trend", "statistic", 
-                            "compare", "summary", "overview", "insight"]
-            if any(term in query_lower for term in analysis_terms):
-                return QueryType.DATA_ANALYSIS
-            return QueryType.FLOOD_CONTROL_QUERY
-            
-        # If we can't determine, use LLM to classify
-        return self._classify_query_with_llm(query)
-    
-    def _classify_query_with_llm(self, query: str) -> QueryType:
-        """Use the LLM to classify ambiguous queries."""
-        if not self.client:
-            logger.warning("OpenAI client not initialized")
-            return QueryType.UNKNOWN
-            
-        try:
-            response = self.client.chat.completions.create(
-                model=self.model,
-                messages=[
-                    {"role": "system", "content": "You are a helpful assistant that classifies user queries. "
-                                                "Respond with just one of: 'general', 'flood_control', or 'data_analysis'"},
-                    {"role": "user", "content": f"Classify this query: {query}"}
-                ],
-                temperature=0.0
-            )
-            
-            classification = response.choices[0].message.content.lower()
-            
-            if 'general' in classification:
-                return QueryType.GENERAL_CONVERSATION
-            elif 'data_analysis' in classification or 'analysis' in classification:
-                return QueryType.DATA_ANALYSIS
-            else:
-                return QueryType.FLOOD_CONTROL_QUERY
-                
-        except Exception as e:
-            logger.warning(f"Error classifying query with LLM: {e}")
-            return QueryType.UNKNOWN
-    
-    def handle_general_conversation(self, query: str) -> str:
-        """Handle general conversation queries with natural responses."""
-        query_lower = query.lower().strip()
-        
-        # Handle common greetings and small talk
-        if any(phrase in query_lower for phrase in ["hi", "hello", "hey", "greetings"]):
-            return "Hello! I'm here to help you explore flood control projects in the Philippines. What would you like to know?"
-            
-        if any(phrase in query_lower for phrase in ["how are you", "how's it going"]):
-            return "I'm doing well, thank you for asking! I'm ready to help you find information about flood control projects. What would you like to know?"
-            
-        if any(phrase in query_lower for phrase in ["thank", "thanks"]):
-            return "You're welcome! Is there anything else you'd like to know about flood control projects?"
-            
-        if any(phrase in query_lower for phrase in ["bye", "goodbye"]):
-            return "Goodbye! Feel free to come back if you have more questions about flood control projects."
-            
-        if any(phrase in query_lower for phrase in ["help", "what can you do"]):
-            return ("I can help you find information about flood control projects across the Philippines. "
-                   "You can ask me about projects by location, cost, contractor, or completion status. "
-                   "For example, you could ask 'Show me flood control projects in Cebu' or 'What are the most expensive projects?'")
-        
-        # For other general queries, use the LLM with a focused prompt
-        try:
-            response = self.client.chat.completions.create(
-                model=self.model,
-                messages=[
-                    {
-                        "role": "system", 
-                        "content": "You are a helpful assistant for the Flood Control Projects Database. "
-                                 "Respond naturally and conversationally. If the query is related to flood control "
-                                 "projects in the Philippines, say you can help with that. Otherwise, keep it brief. "
-                                 "Be friendly and professional."
-                    },
-                    {"role": "user", "content": query}
-                ],
-                temperature=0.7,
-                max_tokens=150
-            )
-            return response.choices[0].message.content
-            
-        except Exception as e:
-            logger.error(f"Error in general conversation: {e}")
-            return "I'm sorry, I'm having trouble processing that right now. Could you try asking about flood control projects in the Philippines?"
-    
-    def generate_response(self, query: str, records: List[Dict[str, Any]] = None, context: Dict[str, Any] = None) -> str:
-        """
-        Generate a response based on the user's query and available records using a hybrid approach.
-        
-        Args:
-            query: The user's input query
-            records: Optional list of records from the database (for flood control queries)
-            context: Additional context for the response
-            
-        Returns:
-            str: The generated response in natural language
-        """
-        # Ensure we have a valid query
-        if not query or not isinstance(query, str) or not query.strip():
-            return "I didn't receive a valid query. Could you please rephrase your question?"
+        if any(phrase in query for phrase in ["most expensive", "highest cost", "largest project"]):
+            return "max_cost"
+        elif any(phrase in query for phrase in ["most projects", "most active", "most frequent", "prominent contractor"]):
+            return "contractor_frequency"
+        elif any(phrase in query for phrase in ["location", "region", "province", "municipality"]):
+            return "location"
+        return "general"
 
-        # Initialize records if None
-        if records is None:
-            records = []
-
-        # Detect query type
-        query_type = self.detect_query_type(query)
-
-        # Handle general conversation
-        if query_type == QueryType.GENERAL_CONVERSATION:
-            return self.handle_general_conversation(query)
-
-        # Handle unknown query types
-        if query_type == QueryType.UNKNOWN:
-            return ("I'm not sure if this is related to flood control projects. "
-                   "I can help you find information about flood control projects in the Philippines, "
-                   "including details about costs, locations, contractors, and project status. "
-                   "Could you rephrase your question?")
-
-        # For flood control queries, check if we have records
-        if not records and query_type != QueryType.GENERAL_CONVERSATION:
-            return self._generate_no_results_response(query)
-
-        # Prepare context if not provided
-        if context is None:
-            context = {}
-
-        # Ensure client is initialized
-        if not hasattr(self, 'client') or self.client is None:
-            # Try to initialize preferred client first
-            if not self.prefer_local and OPENAI_AVAILABLE:
-                self._initialize_client()
-            elif HUGGINGFACE_AVAILABLE:
-                self._initialize_hf_client()
+    def format_analytical_response(self, query: str, results: List[Dict], query_type: str) -> str:
+        """Format responses for analytical queries."""
+        if not results:
+            return "No results found for your query."
             
-            # If still not initialized, try the other option
-            if (not hasattr(self, 'client') or self.client is None) and not self.prefer_local and HUGGINGFACE_AVAILABLE:
-                self._initialize_hf_client()
-            
-            if not hasattr(self, 'client') or self.client is None:
-                logger.error("Failed to initialize any LLM client")
-                return self._format_general_response(query, records)
-        
-        try:
-            # Prepare the prompt
-            prompt = self._prepare_prompt(query, records, context, query_type)
-            
-            if self.model_type == "openai":
-                # Generate response using the OpenAI API
-                response = self.client.chat.completions.create(
-                    model=self.model,
-                    messages=[
-                        {"role": "system", "content": self._get_system_prompt(query_type)},
-                        {"role": "user", "content": prompt}
-                    ],
-                    temperature=0.3,
-                    max_tokens=1000,
-                    top_p=0.9,
-                    frequency_penalty=0.5,
-                    presence_penalty=0.5
-                )
-                
-                if response and hasattr(response, 'choices') and len(response.choices) > 0:
-                    return response.choices[0].message.content.strip()
-                else:
-                    logger.error("Unexpected response format from OpenAI API")
-                    return self._format_general_response(query, records)
-                    
-            elif self.model_type == "huggingface":
-                # Generate response using the Hugging Face model
-                system_prompt = self._get_system_prompt(query_type)
-                full_prompt = f"""{system_prompt}
-                
-                {prompt}
-                
-                Assistant:"""
-                
-                response = self.client.generate_response(
-                    full_prompt,
-                    max_length=1000,
-                    temperature=0.7,
-                    top_p=0.9
-                )
-                return response.strip()
-                
-            else:
-                logger.error(f"Unknown model type: {self.model_type}")
-                return self._format_general_response(query, records)
-                
-        except Exception as e:
-            logger.error(f"Error generating response: {e}")
-            try:
-                # Try to provide a fallback response based on the query type
-                return self._format_general_response(query, records)
-            except Exception as inner_e:
-                logger.error(f"Fallback response generation also failed: {inner_e}")
-                return "I'm having trouble processing your request right now. Please try again later or rephrase your question."
-    
+        if query_type == "max_cost":
+            # Find project with maximum cost
+            max_project = max(results, key=lambda x: float(x.get('ContractCost', 0) or 0))
+            cost = float(max_project.get('ContractCost', 0) or 0)
+            response = [
+                "The most expensive project in the results is:\n",
+                f"**Project:** {max_project.get('ProjectName', 'N/A')}",
+                f"**Location:** {max_project.get('Location', 'N/A')}",
+                f"**Cost:** ₱{cost:,.2f}",
+                f"**Contractor:** {max_project.get('Contractor', 'N/A')}",
+                f"**Status:** {max_project.get('Status', 'N/A')}",
+                f"**Year:** {max_project.get('Year', 'N/A')}"
+            ]
+            return "\n".join(response)
     def _initialize_client(self):
         """Initialize OpenAI client with multiple fallback strategies."""
         api_key = None

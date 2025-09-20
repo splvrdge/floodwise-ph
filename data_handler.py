@@ -19,16 +19,20 @@ logger = logging.getLogger(__name__)
 
 # For fuzzy string matching
 try:
+    # Fuzzy matching setup
     from fuzzywuzzy import fuzz
+    from fuzzywuzzy import process as fuzzy_process
+    FUZZ_AVAILABLE = True
 except ImportError:
-    logger.warning("fuzzywuzzy not found. Using simple string matching instead.")
-    # Fallback to a simple string matching if fuzzywuzzy is not available
-    class SimpleFuzz:
-        @staticmethod
-        def token_sort_ratio(a, b):
-            return 100 if a.lower() == b.lower() else 0
-    
-    fuzz = SimpleFuzz()
+    import warnings
+    warnings.warn("fuzzywuzzy not found. Using simple string matching instead.")
+    FUZZ_AVAILABLE = False
+
+# Fallback to a simple string matching if fuzzywuzzy is not available
+class SimpleFuzz:
+    @staticmethod
+    def token_sort_ratio(a, b):
+        return 100 if a.lower() == b.lower() else 0
 
 class FloodControlDataHandler:
     """Handles CSV data loading, processing, and querying for flood control projects."""
@@ -505,30 +509,29 @@ class FloodControlDataHandler:
         
         return province_mapping.get(name, name)
 
-    def _is_location_match(self, text: str, search_terms: list) -> bool:
-        """Check if text matches any of the search terms with fuzzy matching."""
-        if pd.isna(text):
+    def _is_location_match(self, text, search_terms):
+        if not text or not isinstance(text, str):
             return False
             
         text = str(text).lower()
-        
         for term in search_terms:
-            # Exact match
-            if term.lower() == text:
+            term = term.lower()
+            # Simple exact match check first (fastest)
+            if term in text:
                 return True
                 
-            # Substring match
-            if term.lower() in text or text in term.lower():
-                return True
-                
-            # Fuzzy matching for slight misspellings
-            if fuzz.token_sort_ratio(term.lower(), text) > 85:  # 85% similarity threshold
-                return True
-                
-            # Check for common abbreviations
-            if len(term) > 3 and len(text) > 3:  # Only for terms longer than 3 chars
-                if fuzz.ratio(term[:4].lower(), text[:4].lower()) > 90:  # Check first 4 chars
-                    return True
+            # Then try fuzzy matching if available
+            if FUZZ_AVAILABLE:
+                try:
+                    # Check first 4 characters for performance
+                    if len(term) >= 4 and len(text) >= 4:
+                        if fuzz.ratio(term[:4], text[:4]) > 90:
+                            return True
+                    # Fallback to full string comparison
+                    if fuzz.ratio(term, text) > 85:
+                        return True
+                except Exception as e:
+                    self.logger.warning(f"Fuzzy matching error: {str(e)}")
                     
         return False
 
