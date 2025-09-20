@@ -11,18 +11,11 @@ baseUrlPath = "/"
 fileWatcherType = "none"
 enableStaticServing = true
 enableWebsocketCompression = false
-enableCORS = true
-enableXsrfProtection = true
-enableWebsocketCompression = false
 
 # Enable built-in health checks
 [server.health]
 enabled = true
 path = "/healthz"
-
-[browser]
-gatherUsageStats = false
-serverAddress = "0.0.0.0"
 
 [runner]
 magicEnabled = true
@@ -43,15 +36,6 @@ font = "sans serif"
 [client]
 showErrorDetails = true
 
-[runner]
-magicEnabled = true
-installTracer = false
-fixMatplotlib = true
-
 [ui]
 hideTopBar = false
 hideSidebarNav = false
-
-# Disable websocket compression for better performance
-[server.enableWebsocketCompression]
-enabled = false
