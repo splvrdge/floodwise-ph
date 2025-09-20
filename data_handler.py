@@ -101,11 +101,22 @@ class FloodControlDataHandler:
                 
         return stats
     
-    def _standardize_text(self, text: str) -> str:
-        """Standardize text by converting to lowercase and removing extra whitespace."""
+    def _standardize_text(self, text: str, preserve_case: bool = False) -> str:
+        """Standardize text while optionally preserving case.
+        
+        Args:
+            text: The text to standardize
+            preserve_case: If True, preserves the original case. If False, converts to lowercase.
+            
+        Returns:
+            str: Standardized text with extra whitespace removed
+        """
         if pd.isna(text):
             return ''
-        return ' '.join(str(text).strip().lower().split())
+        text = str(text).strip()
+        if not preserve_case:
+            text = text.lower()
+        return ' '.join(text.split())
 
     def _extract_project_type(self, description: str) -> str:
         """Extract and standardize project type from description."""
@@ -205,7 +216,12 @@ class FloodControlDataHandler:
             # Standardize text columns
             text_columns = self.df.select_dtypes(include=['object']).columns.tolist()
             for col in text_columns:
-                self.df[col] = self.df[col].apply(self._standardize_text)
+                # Use preserve_case=True for display fields, False for search fields
+                self.df[col] = self.df[col].apply(
+                    lambda x: self._standardize_text(x, preserve_case=True)
+                    if col in ['ProjectName', 'ProjectDescription', 'Location', 'Contractor', 'Municipality', 'Province', 'Region']
+                    else self._standardize_text(x, preserve_case=False)
+                )
             
             # Add standardized location columns
             self.df['location_standard'] = self.df['Municipality'].fillna('') + ', ' + \
@@ -1315,32 +1331,97 @@ class FloodControlDataHandler:
         # Create analysis summary
         analysis_info = {
             'query_type': 'analysis',
-            'similarity_score': 1.0
+            'similarity_score': 1.0,
+            'total_projects': len(df)
         }
         
+        # Calculate average cost if ContractCost exists
+        if 'ContractCost' in df.columns:
+            analysis_info['total_investment'] = df['ContractCost'].sum()
+            analysis_info['average_cost'] = df['ContractCost'].mean()
+            
+            # Add cost statistics
+            analysis_info['cost_statistics'] = {
+                'min': df['ContractCost'].min(),
+                'max': df['ContractCost'].max(),
+                'median': df['ContractCost'].median(),
+                'total': df['ContractCost'].sum(),
+                'average': df['ContractCost'].mean(),
+                'count': len(df[df['ContractCost'] > 0])
+            }
+        
+        # Location-based analysis
+        if any(term in query.lower() for term in ['cebu', 'manila', 'davao', 'location', 'city', 'province']):
+            if 'Municipality' in df.columns and 'ContractCost' in df.columns:
+                location_stats = df.groupby('Municipality').agg(
+                    total_projects=('ContractCost', 'count'),
+                    total_investment=('ContractCost', 'sum'),
+                    average_cost=('ContractCost', 'mean')
+                ).reset_index()
+                
+                analysis_info['location_stats'] = location_stats.sort_values(
+                    'total_investment', ascending=False
+                ).head(10).to_dict('records')
+        
         # Distribution analysis
-        if 'distribution' in query:
-            if 'region' in query:
+        if 'distribution' in query.lower():
+            if 'region' in query.lower() and 'Region' in df.columns:
                 analysis_info['region_distribution'] = df['Region'].value_counts().to_dict()
-            elif 'province' in query:
+            elif 'province' in query.lower() and 'Province' in df.columns:
                 analysis_info['province_distribution'] = df['Province'].value_counts().head(10).to_dict()
-            elif 'year' in query:
+            elif 'year' in query.lower() and 'CompletionYear' in df.columns:
                 analysis_info['year_distribution'] = df['CompletionYear'].value_counts().sort_index().to_dict()
         
         # Trend analysis
-        if 'trend' in query and 'funding' in query:
+        if 'trend' in query.lower() and 'funding' in query.lower():
             if 'ContractCost' in df.columns and 'InfraYear' in df.columns:
-                yearly_funding = df.groupby('InfraYear')['ContractCost'].sum().to_dict()
-                analysis_info['funding_trend'] = yearly_funding
+                yearly_funding = df.groupby('InfraYear')['ContractCost'].agg(['sum', 'count', 'mean']).reset_index()
+                analysis_info['funding_trend'] = yearly_funding.rename(columns={
+                    'sum': 'total_investment',
+                    'count': 'project_count',
+                    'mean': 'average_cost'
+                }).to_dict('records')
         
         # Top analysis
-        if 'top' in query:
-            if 'expensive' in query:
-                top_projects = df.nlargest(5, 'ContractCost')[['ProjectDescription', 'ContractCost', 'Municipality', 'Province']].to_dict('records')
+        if 'top' in query.lower():
+            if 'expensive' in query.lower() and 'ContractCost' in df.columns:
+                top_projects = df.nlargest(
+                    5, 
+                    'ContractCost'
+                )[['ProjectName', 'ProjectDescription', 'ContractCost', 'Municipality', 'Province']].to_dict('records')
                 analysis_info['top_expensive_projects'] = top_projects
-            elif 'contractor' in query:
-                top_contractors = df['Contractor'].value_counts().head(5).to_dict()
+                
+            elif 'contractor' in query.lower() and 'Contractor' in df.columns:
+                top_contractors = df[df['Contractor'].notna()].groupby('Contractor').agg(
+                    project_count=('Contractor', 'count'),
+                    total_contract_amount=('ContractCost', 'sum')
+                ).sort_values('total_contract_amount', ascending=False).head(5).reset_index().to_dict('records')
                 analysis_info['top_contractors'] = top_contractors
+        
+        # Average spending query
+        if any(term in query.lower() for term in ['average', 'avg', 'mean']):
+            if 'ContractCost' in df.columns:
+                location = None
+                if 'cebu' in query.lower():
+                    location = 'Cebu'
+                elif 'manila' in query.lower():
+                    location = 'Manila'
+                elif 'davao' in query.lower():
+                    location = 'Davao'
+                
+                if location:
+                    location_df = df[df['Municipality'].str.contains(location, case=False, na=False) | 
+                                   df['Province'].str.contains(location, case=False, na=False) |
+                                   df['Region'].str.contains(location, case=False, na=False)]
+                    if not location_df.empty:
+                        analysis_info['location_analysis'] = {
+                            'location': location,
+                            'total_projects': len(location_df),
+                            'total_investment': location_df['ContractCost'].sum(),
+                            'average_cost': location_df['ContractCost'].mean(),
+                            'min_cost': location_df['ContractCost'].min(),
+                            'max_cost': location_df['ContractCost'].max()
+                        }
         
         return [analysis_info]
     
