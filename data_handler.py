@@ -34,6 +34,48 @@ class FloodControlDataHandler:
             st.error(f"Error loading CSV file from {file_path}: {str(e)}")
             return False
     
+    def get_summary_stats(self) -> Dict[str, Any]:
+        """
+        Generate summary statistics for the loaded dataset.
+        
+        Returns:
+            dict: A dictionary containing various statistics about the dataset
+        """
+        if self.df is None or self.df.empty:
+            return {}
+            
+        stats = {
+            'total_records': len(self.df),
+            'columns': self.df.columns.tolist(),
+            'column_count': len(self.df.columns),
+            'missing_values': int(self.df.isnull().sum().sum()),
+            'duplicate_rows': int(self.df.duplicated().sum())
+        }
+        
+        # Add date range if there are date columns
+        date_columns = self.df.select_dtypes(include=['datetime64']).columns
+        if not date_columns.empty:
+            for col in date_columns:
+                stats[f'min_date_{col}'] = str(self.df[col].min())
+                stats[f'max_date_{col}'] = str(self.df[col].max())
+                
+        # Add numeric stats
+        numeric_columns = self.df.select_dtypes(include=['int64', 'float64']).columns
+        stats['numeric_columns'] = numeric_columns.tolist()
+        
+        # Add categorical stats
+        categorical_columns = self.df.select_dtypes(include=['object', 'category']).columns
+        stats['categorical_columns'] = categorical_columns.tolist()
+        
+        # Get unique values for categorical columns (limited to first 10 for performance)
+        for col in categorical_columns[:10]:  # Limit to first 10 categorical columns
+            unique_vals = self.df[col].dropna().unique()
+            stats[f'unique_{col}'] = len(unique_vals)
+            if len(unique_vals) <= 20:  # Only include values if not too many
+                stats[f'unique_{col}_values'] = unique_vals.tolist()
+                
+        return stats
+    
     def _process_loaded_data(self, source_description: str) -> bool:
         """Process loaded data regardless of source."""
         try:
