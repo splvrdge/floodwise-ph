@@ -727,7 +727,12 @@ class FloodControlDataHandler:
         return [analysis_info]
     
     def get_summary_stats(self) -> Dict[str, Any]:
-        """Get summary statistics for the dataset."""
+        """Get summary statistics for the dataset.
+        
+        Returns:
+            Dict containing various statistics about the dataset including
+            record counts, column information, and data quality metrics.
+        """
         if self.df is None or self.df.empty:
             return {
                 'total_records': 0,
