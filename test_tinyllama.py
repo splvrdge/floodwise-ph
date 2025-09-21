@@ -174,20 +174,32 @@ def test_tinyllama_integration():
         return False
 
 def test_model_loading():
-    """Test if TinyLlama model can be loaded successfully using official configuration."""
+    """Test if TinyLlama model can be loaded successfully with improved error handling."""
     print("\n🔧 Testing TinyLlama Model Loading...")
     
     try:
+        # Check PyTorch and transformers versions first
+        try:
+            import torch
+            import transformers
+            print(f"📦 PyTorch version: {torch.__version__}")
+            print(f"📦 Transformers version: {transformers.__version__}")
+            print(f"🖥️  CUDA available: {torch.cuda.is_available()}")
+            if torch.cuda.is_available():
+                print(f"🎮 GPU: {torch.cuda.get_device_name(0)}")
+        except Exception as version_error:
+            print(f"⚠️  Could not check versions: {version_error}")
+        
         from llm_handler import LLMHandler
         
-        print("📥 Loading TinyLlama model following official Hugging Face configuration...")
+        print("📥 Loading TinyLlama model with improved device handling...")
         print("   (This may take a few minutes on first run - downloading ~2.2GB)")
         start_time = time.time()
         
         llm_handler = LLMHandler()
         
         load_time = time.time() - start_time
-        print(f"⏱️  Model loaded in {load_time:.2f}s")
+        print(f"⏱️  Model loading attempt completed in {load_time:.2f}s")
         
         if llm_handler.is_available():
             print("✅ TinyLlama model loaded successfully!")
@@ -225,11 +237,31 @@ def test_model_loading():
             return True
         else:
             print("❌ TinyLlama model failed to load")
+            print("\n🔧 Troubleshooting suggestions:")
+            print("1. Try updating transformers: pip install --upgrade transformers")
+            print("2. Try updating torch: pip install --upgrade torch")
+            print("3. Clear Hugging Face cache: rm -rf ~/.cache/huggingface/")
+            print("4. Check available disk space (need ~3GB free)")
+            print("5. Check internet connection for model download")
             return False
             
     except Exception as e:
         print(f"❌ Model loading failed: {e}")
         logger.error("Model loading test failed", exc_info=True)
+        
+        # Provide specific help for common errors
+        error_str = str(e).lower()
+        if "meta tensor" in error_str:
+            print("\n🔧 Meta tensor error detected:")
+            print("This is usually caused by version compatibility issues.")
+            print("Try: pip install --upgrade transformers torch accelerate")
+        elif "out of memory" in error_str:
+            print("\n🔧 Memory error detected:")
+            print("Try running on CPU or with smaller batch size")
+        elif "connection" in error_str or "download" in error_str:
+            print("\n🔧 Network error detected:")
+            print("Check your internet connection and try again")
+        
         return False
 
 if __name__ == "__main__":

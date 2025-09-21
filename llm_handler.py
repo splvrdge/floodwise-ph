@@ -78,7 +78,7 @@ class LLMHandler:
     
     
     def _initialize_huggingface_model(self):
-        """Initialize TinyLlama model following official Hugging Face configuration."""
+        """Initialize TinyLlama model with proper device handling."""
         if not HUGGINGFACE_AVAILABLE:
             logger.warning("Hugging Face transformers not available. Please install with: pip install transformers torch")
             self.available = False
@@ -87,30 +87,66 @@ class LLMHandler:
         try:
             logger.info(f"Loading TinyLlama model: {self.model}")
             
-            # Follow TinyLlama's official configuration from Hugging Face
-            # Use bfloat16 if available, otherwise float16, fallback to float32
+            # Determine device and dtype with better compatibility
             if torch.cuda.is_available():
-                torch_dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
-                device_map = "auto"
-                logger.info("Using CUDA with auto device mapping")
+                device = 0  # Use first GPU
+                torch_dtype = torch.float16  # Use float16 for better compatibility
+                logger.info("Using CUDA GPU")
             else:
+                device = -1  # Use CPU
                 torch_dtype = torch.float32
-                device_map = None
                 logger.info("Using CPU")
             
-            # Create pipeline following TinyLlama's official example
-            self.pipeline = pipeline(
-                "text-generation",
-                model=self.model,
-                torch_dtype=torch_dtype,
-                device_map=device_map,
-                trust_remote_code=True
-            )
+            # Create pipeline with explicit device handling (avoid device_map="auto")
+            try:
+                self.pipeline = pipeline(
+                    "text-generation",
+                    model=self.model,
+                    torch_dtype=torch_dtype,
+                    device=device,
+                    trust_remote_code=True,
+                    model_kwargs={
+                        "torch_dtype": torch_dtype,
+                        "low_cpu_mem_usage": True,
+                    }
+                )
+                logger.info(f"Successfully loaded {self.model} with pipeline approach")
+            except Exception as pipeline_error:
+                logger.warning(f"Pipeline approach failed: {pipeline_error}")
+                logger.info("Trying manual model loading...")
+                
+                # Fallback: Manual model and tokenizer loading
+                self.tokenizer = AutoTokenizer.from_pretrained(self.model)
+                if self.tokenizer.pad_token is None:
+                    self.tokenizer.pad_token = self.tokenizer.eos_token
+                
+                # Load model manually with proper device handling
+                model = AutoModelForCausalLM.from_pretrained(
+                    self.model,
+                    torch_dtype=torch_dtype,
+                    low_cpu_mem_usage=True,
+                    trust_remote_code=True
+                )
+                
+                # Move to device after loading
+                if torch.cuda.is_available():
+                    model = model.to('cuda')
+                
+                # Create pipeline with loaded model
+                self.pipeline = pipeline(
+                    "text-generation",
+                    model=model,
+                    tokenizer=self.tokenizer,
+                    device=device,
+                    torch_dtype=torch_dtype
+                )
+                logger.info(f"Successfully loaded {self.model} with manual approach")
             
             # Store tokenizer reference for chat template
-            self.tokenizer = self.pipeline.tokenizer
+            if not hasattr(self, 'tokenizer') or self.tokenizer is None:
+                self.tokenizer = self.pipeline.tokenizer
             
-            logger.info(f"Successfully loaded {self.model} with {torch_dtype}")
+            logger.info(f"TinyLlama model ready with {torch_dtype} precision")
             self.available = True
             
         except Exception as e:
