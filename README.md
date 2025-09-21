@@ -1,21 +1,24 @@
 # 🌊 FloodWise PH
 
-A web application that uses OpenAI's GPT models to answer natural language questions about flood control projects in the Philippines. The app comes pre-loaded with DPWH project records and provides intelligent responses about contractors, costs, locations, and project details.
+AI-Powered Philippines Flood Control Intelligence Platform
+
+## Overview
+
+FloodWise PH is a simple Streamlit web application that uses TinyLlama AI (via Hugging Face API) to answer natural language questions about flood control projects in the Philippines. The app analyzes DPWH (Department of Public Works and Highways) project records through an intuitive chat interface.
 
 ## 🌟 Features
 
 - **Pre-loaded Dataset**: DPWH flood control projects ready to query
-- **Natural Language Queries**: Ask questions in plain English about the projects
-- **OpenAI Integration**: Uses GPT models for generating contextual responses
+- **Natural Language Queries**: Ask questions in plain English about the projects  
+- **TinyLlama AI**: Uses Hugging Face API for intelligent responses
 - **Mobile-Responsive Design**: Works well on both desktop and mobile devices
-- **Simple Interface**: User-friendly Streamlit interface
+- **Simple Interface**: Clean, user-friendly chat interface
 
 ## 🚀 Quick Start
 
 ### Prerequisites
 - Python 3.9+
-- OpenAI API key
-- GitHub account (for deployment)
+- Internet connection (for Hugging Face API)
 
 ### Option 1: Deploy to Streamlit Cloud (Recommended)
 
