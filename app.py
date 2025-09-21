@@ -232,8 +232,10 @@ def initialize_handlers():
             is_cloud = any(key in os.environ for key in [
                 'STREAMLIT_SERVER_RUNNING_REMOTELY', 
                 'STREAMLIT_CLOUD',
-                'STREAMLIT_SERVER_RUN_ON_UPDATE'
-            ])
+                'STREAMLIT_SERVER_RUN_ON_UPDATE',
+                'STREAMLIT_SHARING',
+                'STREAMLIT_CLOUD_ENVIRONMENT'
+            ]) or '/mount/src/' in os.getcwd()
             
             if is_cloud:
                 # On cloud, skip TinyLlama loading due to memory constraints
@@ -565,8 +567,10 @@ def main():
                 is_cloud = any(key in os.environ for key in [
                     'STREAMLIT_SERVER_RUNNING_REMOTELY', 
                     'STREAMLIT_CLOUD',
-                    'STREAMLIT_SERVER_RUN_ON_UPDATE'
-                ])
+                    'STREAMLIT_SERVER_RUN_ON_UPDATE',
+                    'STREAMLIT_SHARING',
+                    'STREAMLIT_CLOUD_ENVIRONMENT'
+                ]) or '/mount/src/' in os.getcwd()
                 
                 if is_cloud:
                     st.info("🌐 Cloud Mode")
