@@ -7,8 +7,27 @@ from typing import List, Dict, Any, Optional, Tuple, Union
 import numpy as np
 import pandas as pd
 import streamlit as st
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.metrics.pairwise import cosine_similarity
+
+# Try to import scikit-learn components with fallback
+try:
+    from sklearn.feature_extraction.text import TfidfVectorizer
+    from sklearn.metrics.pairwise import cosine_similarity
+    SKLEARN_AVAILABLE = True
+except ImportError as e:
+    logger.warning(f"scikit-learn not available: {e}. Some search features will be limited.")
+    SKLEARN_AVAILABLE = False
+    
+    # Create dummy classes for fallback
+    class TfidfVectorizer:
+        def __init__(self, *args, **kwargs):
+            pass
+        def fit_transform(self, texts):
+            return None
+        def transform(self, texts):
+            return None
+    
+    def cosine_similarity(a, b):
+        return np.array([[0.5]])
 
 # Configure logging
 logging.basicConfig(
@@ -274,22 +293,36 @@ class FloodControlDataHandler:
         if self.df is None or self.df.empty:
             return
             
-        # Combine all text columns into a single searchable text
-        search_texts = []
-        for _, row in self.df.iterrows():
-            text_parts = []
-            for col in self.text_columns:
-                if pd.notna(row[col]):
-                    text_parts.append(str(row[col]))
-            search_texts.append(" ".join(text_parts))
-        
-        # Create TF-IDF vectors
-        self.vectorizer = TfidfVectorizer(
-            stop_words='english',
-            max_features=1000,
-            ngram_range=(1, 2)
-        )
-        self.tfidf_matrix = self.vectorizer.fit_transform(search_texts)
+        # Only create search index if scikit-learn is available
+        if not SKLEARN_AVAILABLE:
+            logger.warning("scikit-learn not available. Skipping TF-IDF index creation.")
+            self.vectorizer = None
+            self.tfidf_matrix = None
+            return
+            
+        try:
+            # Combine all text columns into a single searchable text
+            search_texts = []
+            for _, row in self.df.iterrows():
+                text_parts = []
+                for col in self.text_columns:
+                    if pd.notna(row[col]):
+                        text_parts.append(str(row[col]))
+                search_texts.append(" ".join(text_parts))
+            
+            # Create TF-IDF vectors
+            self.vectorizer = TfidfVectorizer(
+                stop_words='english',
+                max_features=1000,
+                ngram_range=(1, 2)
+            )
+            self.tfidf_matrix = self.vectorizer.fit_transform(search_texts)
+            logger.info("TF-IDF search index created successfully")
+            
+        except Exception as e:
+            logger.error(f"Error creating search index: {e}")
+            self.vectorizer = None
+            self.tfidf_matrix = None
     
     def search_relevant_records(self, query: str, top_k: int = 10) -> List[Dict[str, Any]]:
         """
@@ -363,28 +396,37 @@ class FloodControlDataHandler:
             # If we still have too many results, use TF-IDF to find the most relevant ones
             if len(working_df) > top_k:
                 try:
-                    # Combine text columns for TF-IDF
-                    text_columns = [col for col in ['ProjectName', 'ProjectDescription', 'Location', 'Contractor'] 
-                                  if col in working_df.columns]
-                    
-                    if text_columns:
-                        working_df['combined_text'] = working_df[text_columns].fillna('').apply(
-                            lambda x: ' '.join(x.astype(str)), axis=1
-                        )
+                    # Only use TF-IDF if scikit-learn is available
+                    if SKLEARN_AVAILABLE:
+                        # Combine text columns for TF-IDF
+                        text_columns = [col for col in ['ProjectName', 'ProjectDescription', 'Location', 'Contractor'] 
+                                      if col in working_df.columns]
                         
-                        # Create TF-IDF vectors
-                        vectorizer = TfidfVectorizer(stop_words='english')
-                        tfidf_matrix = vectorizer.fit_transform(working_df['combined_text'])
-                        query_vec = vectorizer.transform([query])
-                        
-                        # Calculate cosine similarity
-                        cosine_similarities = cosine_similarity(query_vec, tfidf_matrix).flatten()
-                        
-                        # Get top-k most similar documents
-                        top_indices = cosine_similarities.argsort()[-top_k:][::-1]
-                        working_df = working_df.iloc[top_indices]
-                        
-                        logger.debug(f"Applied TF-IDF ranking, top {len(working_df)} results")
+                        if text_columns:
+                            working_df['combined_text'] = working_df[text_columns].fillna('').apply(
+                                lambda x: ' '.join(x.astype(str)), axis=1
+                            )
+                            
+                            # Create TF-IDF vectors
+                            vectorizer = TfidfVectorizer(stop_words='english')
+                            tfidf_matrix = vectorizer.fit_transform(working_df['combined_text'])
+                            query_vec = vectorizer.transform([query])
+                            
+                            # Calculate cosine similarity
+                            cosine_similarities = cosine_similarity(query_vec, tfidf_matrix).flatten()
+                            
+                            # Get top-k most similar documents
+                            top_indices = cosine_similarities.argsort()[-top_k:][::-1]
+                            working_df = working_df.iloc[top_indices]
+                            
+                            logger.debug(f"Applied TF-IDF ranking, top {len(working_df)} results")
+                        else:
+                            # Fall back to simple text matching
+                            working_df = working_df.head(top_k)
+                    else:
+                        # Fall back to simple text matching when scikit-learn is not available
+                        logger.info("scikit-learn not available, using simple text matching")
+                        working_df = self._simple_text_search(working_df, query, top_k)
                     
                 except Exception as e:
                     error_msg = f"Error in TF-IDF processing: {str(e)}"
@@ -405,6 +447,53 @@ class FloodControlDataHandler:
             if st.session_state.get('debug_mode', False):
                 st.error(f"Error: {error_msg}")
             return []
+    
+    def _simple_text_search(self, df: pd.DataFrame, query: str, top_k: int) -> pd.DataFrame:
+        """
+        Simple text search fallback when scikit-learn is not available.
+        
+        Args:
+            df: DataFrame to search in
+            query: Search query
+            top_k: Maximum number of results to return
+            
+        Returns:
+            Filtered DataFrame with matching records
+        """
+        if df.empty or not query:
+            return df.head(top_k)
+            
+        query_terms = query.lower().split()
+        text_columns = [col for col in ['ProjectName', 'ProjectDescription', 'Location', 'Contractor'] 
+                       if col in df.columns]
+        
+        if not text_columns:
+            return df.head(top_k)
+        
+        # Score each row based on term matches
+        scores = []
+        for _, row in df.iterrows():
+            score = 0
+            combined_text = ' '.join([str(row.get(col, '')).lower() for col in text_columns])
+            
+            for term in query_terms:
+                if term in combined_text:
+                    score += combined_text.count(term)
+            
+            scores.append(score)
+        
+        # Add scores to dataframe and sort
+        df_with_scores = df.copy()
+        df_with_scores['search_score'] = scores
+        
+        # Filter out rows with zero score and sort by score
+        df_filtered = df_with_scores[df_with_scores['search_score'] > 0]
+        if df_filtered.empty:
+            # If no matches, return top results anyway
+            return df.head(top_k)
+        
+        df_sorted = df_filtered.sort_values('search_score', ascending=False)
+        return df_sorted.drop('search_score', axis=1).head(top_k)
     
     def _extract_location(self, query: str) -> str:
         """Extract location mentions from query."""

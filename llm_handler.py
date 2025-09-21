@@ -172,6 +172,9 @@ class LLMHandler:
     def _init_with_custom_http_client(self, api_key: str):
         """Initialize with custom HTTP client to avoid proxies issue."""
         try:
+            # Try to import httpx
+            import httpx
+            
             # Create custom HTTP client without problematic parameters
             http_client = httpx.Client(
                 timeout=httpx.Timeout(30.0),
