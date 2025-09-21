@@ -78,7 +78,7 @@ class LLMHandler:
     
     
     def _initialize_huggingface_model(self):
-        """Initialize TinyLlama model with proper device handling."""
+        """Initialize TinyLlama model with cloud-friendly error handling."""
         if not HUGGINGFACE_AVAILABLE:
             logger.warning("Hugging Face transformers not available. Please install with: pip install transformers torch")
             self.available = False
@@ -86,6 +86,21 @@ class LLMHandler:
             
         try:
             logger.info(f"Loading TinyLlama model: {self.model}")
+            
+            # Check if running on Streamlit Cloud (limited resources)
+            import os
+            is_cloud = any(key in os.environ for key in [
+                'STREAMLIT_SERVER_RUNNING_REMOTELY', 
+                'STREAMLIT_CLOUD',
+                'STREAMLIT_SERVER_RUN_ON_UPDATE'
+            ])
+            
+            if is_cloud:
+                logger.warning("Detected cloud environment - TinyLlama may not work due to memory constraints")
+                # Don't try to load the model on cloud, just set as unavailable
+                self.available = False
+                logger.info("Skipping TinyLlama loading on cloud - using fallback mode")
+                return
             
             # Determine device and dtype with better compatibility
             if torch.cuda.is_available():
@@ -153,8 +168,8 @@ class LLMHandler:
             self.tokenizer = None
             self.pipeline = None
             self.available = False
-            if hasattr(st, 'error'):
-                st.error(f"Failed to load TinyLlama model: {str(e)}. Please check your installation.")
+            # Don't show error in Streamlit UI to avoid breaking the app
+            logger.warning("TinyLlama unavailable - app will run in fallback mode")
     
     def detect_query_type(self, query: str) -> str:
         """Detect the type of query to determine response format."""

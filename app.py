@@ -227,31 +227,56 @@ def initialize_handlers():
     # Initialize LLM handler if not exists
     if 'llm_handler' not in st.session_state:
         try:
-            with st.spinner("Loading TinyLlama model... (This may take a few minutes on first run)"):
-                # Initialize TinyLlama - no API key needed!
-                st.session_state.llm_handler = LLMHandler()  # Uses TinyLlama by default
+            # Check if running on Streamlit Cloud
+            import os
+            is_cloud = any(key in os.environ for key in [
+                'STREAMLIT_SERVER_RUNNING_REMOTELY', 
+                'STREAMLIT_CLOUD',
+                'STREAMLIT_SERVER_RUN_ON_UPDATE'
+            ])
+            
+            if is_cloud:
+                # On cloud, skip TinyLlama loading due to memory constraints
+                st.info("""
+                🌐 **Running on Streamlit Cloud**
                 
-                # Test if the model is available
-                if not st.session_state.llm_handler.is_available():
-                    st.error("""
-                    ❌ **TinyLlama Model Failed to Load**
+                TinyLlama is not available in cloud mode due to memory constraints.
+                The app will run in **data analysis mode** with intelligent fallback responses.
+                
+                ✅ **Available features:**
+                - Search and filter flood control projects
+                - View project details and statistics
+                - Export data and generate reports
+                - Interactive data exploration
+                """)
+                st.session_state.llm_handler = LLMHandler()  # Will auto-detect cloud and skip model loading
+            else:
+                # Local environment - try to load TinyLlama
+                with st.spinner("Loading TinyLlama model... (This may take a few minutes on first run)"):
+                    st.session_state.llm_handler = LLMHandler()  # Uses TinyLlama by default
                     
-                    The local AI model couldn't be loaded. This might be because:
-                    - Missing dependencies (transformers, torch)
-                    - Insufficient memory or disk space
-                    - Network issues during model download
-                    
-                    Please try:
-                    1. Install dependencies: `pip install transformers torch accelerate`
-                    2. Restart the application
-                    3. Check your internet connection for model download
-                    
-                    The app will use a limited fallback mode.
-                    """)
-                    st.session_state.llm_handler = None
+                    # Test if the model is available
+                    if not st.session_state.llm_handler.is_available():
+                        st.warning("""
+                        ⚠️ **TinyLlama Model Not Available**
+                        
+                        The local AI model couldn't be loaded. This might be because:
+                        - Missing dependencies (transformers, torch)
+                        - Insufficient memory or disk space
+                        - Network issues during model download
+                        
+                        **The app will run in fallback mode with basic data analysis.**
+                        
+                        To enable TinyLlama:
+                        1. Install dependencies: `pip install transformers torch accelerate`
+                        2. Restart the application
+                        3. Ensure you have at least 4GB free RAM
+                        """)
+                        
         except Exception as e:
-            st.error(f"❌ Error initializing AI model: {str(e)}")
-            st.session_state.llm_handler = None
+            logger.error(f"Error initializing LLM handler: {e}")
+            st.warning(f"⚠️ AI model initialization failed. Running in fallback mode.")
+            st.session_state.llm_handler = LLMHandler()  # Create handler anyway for fallback mode
     
     # Initialize chat history if not exists
     if 'chat_history' not in st.session_state:
@@ -535,8 +560,20 @@ def main():
                 st.success("✅ TinyLlama Ready")
                 st.caption("Using local TinyLlama model for intelligent responses")
             else:
-                st.warning("⚠️ Basic Mode Active")
-                st.caption("Limited functionality without AI model")
+                # Check if running on cloud
+                import os
+                is_cloud = any(key in os.environ for key in [
+                    'STREAMLIT_SERVER_RUNNING_REMOTELY', 
+                    'STREAMLIT_CLOUD',
+                    'STREAMLIT_SERVER_RUN_ON_UPDATE'
+                ])
+                
+                if is_cloud:
+                    st.info("🌐 Cloud Mode")
+                    st.caption("Data analysis mode with intelligent fallback responses")
+                else:
+                    st.warning("⚠️ Fallback Mode")
+                    st.caption("TinyLlama not available - using basic responses")
             
             # Model info
             st.markdown("**Features:**")
