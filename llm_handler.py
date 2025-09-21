@@ -224,31 +224,33 @@ class LLMHandler:
     
     def _get_system_prompt(self, query_type: str) -> str:
         """Get the appropriate system prompt based on query type."""
-        base_prompt = """You are a knowledgeable assistant providing information about flood control projects in the Philippines. 
-        Your responses should be based SOLELY on the provided dataset. If information isn't available in the data, 
-        clearly state that rather than making assumptions.
-        
-        Response Guidelines:
-        - Use natural, conversational language
-        - Be concise but informative
-        - Use bullet points or numbered lists only when necessary
-        - Vary your sentence structure
-        - Use contractions (e.g., "don't" instead of "do not")
-        - If exact numbers aren't available, be clear about what information you do have
-        - Never make up or hallucinate information
-        - If the query is unclear, ask for clarification
-        - Format monetary values clearly (e.g., ₱1,234,567.89)
-        - For location-based queries, be specific about the administrative divisions (region, province, city/municipality)
-        - For contractor information, focus on the specific projects from the dataset
-        - For cost-related queries, be clear about whether the amounts are in Philippine Pesos (₱)
-        - For project types, use the exact terminology from the dataset
-        - For time-based queries, be clear about the time periods being referenced
-        - If multiple records are relevant, summarize the key points rather than listing each one
-        - When appropriate, provide context about why certain information might be significant
-        - If the query is too broad, suggest ways to narrow it down
-        - Always maintain a helpful and professional tone
-        - If you need to reference multiple records, group them logically
-        - When discussing costs, be clear about whether they're totals or averages"""
+        base_prompt = """You are FloodWise PH, an expert AI assistant specializing in Philippine flood control infrastructure. You have comprehensive knowledge of DPWH (Department of Public Works and Highways) projects across all regions of the Philippines.
+
+        CORE PRINCIPLES:
+        - Base ALL responses SOLELY on the provided dataset - never hallucinate or assume information
+        - Provide actionable, contextual insights beyond just data retrieval
+        - Use clear, professional language appropriate for government officials, contractors, and citizens
+        - Always include relevant context about the significance of findings
+
+        RESPONSE STRUCTURE:
+        1. Direct Answer: Start with a clear, direct response to the query
+        2. Key Insights: Highlight 2-3 most important findings
+        3. Supporting Data: Provide specific numbers, locations, and details
+        4. Context: Explain why this information matters for flood control planning
+        5. Follow-up: Suggest related questions or areas to explore
+
+        FORMATTING STANDARDS:
+        - Monetary values: Always use ₱ symbol with proper comma separation (₱1,234,567.89)
+        - Locations: Use full hierarchy (Municipality, Province, Region) for clarity
+        - Dates: Use consistent YYYY format for years, full dates when available
+        - Percentages: Round to 1 decimal place for readability
+        - Use emojis strategically for visual appeal: 🌊💰📍📊🏗️📅⚡🏆
+
+        DATA ACCURACY:
+        - If information is missing, explicitly state "Data not available for [specific field]"
+        - When approximating, use phrases like "approximately" or "around"
+        - Always specify the scope of your analysis (e.g., "Based on 1,234 projects in the dataset")
+        - Distinguish between contract costs (actual) and approved budgets (ABC)"""
         
         type_specific = {
             'location': 'Focus on the geographic aspects of the projects, including regions, provinces, and municipalities. Highlight any patterns in project distribution.',
@@ -323,7 +325,10 @@ Please provide a helpful, accurate response based on the information above. If t
             if any(term in query.lower() for term in ['contractor', 'company', 'firm']):
                 contractors = {}
                 for record in records:
-                    contractor = record.get('contractor', 'Unknown')
+                    contractor = record.get('Contractor', 'Unknown Contractor')
+                    # Clean up contractor name
+                    if not contractor or contractor.strip() == '' or contractor.lower() == 'nan':
+                        contractor = 'Unknown Contractor'
                     if contractor not in contractors:
                         contractors[contractor] = []
                     contractors[contractor].append(record)
@@ -334,25 +339,40 @@ Please provide a helpful, accurate response based on the information above. If t
                 return "\n".join(response)
                 
             # For cost queries, show top projects by cost
-            if any(term in query.lower() for term in ['cost', 'price', 'budget']):
+            if any(term in query.lower() for term in ['cost', 'price', 'budget', 'expensive']):
                 sorted_records = sorted(
                     records,
-                    key=lambda x: float(x.get('contract_cost', 0)) if x.get('contract_cost') else 0,
+                    key=lambda x: float(x.get('ContractCost', 0)) if x.get('ContractCost') else 0,
                     reverse=True
                 )
                 response = ["Here are the most expensive projects I found:"]
                 for i, record in enumerate(sorted_records[:5], 1):
-                    name = record.get('project_name', 'Unnamed Project')
-                    cost = record.get('contract_cost', 'N/A')
-                    response.append(f"{i}. {name} - {cost}")
+                    name = record.get('ProjectDescription', 'Unnamed Project')
+                    cost = record.get('ContractCost', 0)
+                    location = f"{record.get('Municipality', '')}, {record.get('Province', '')}"
+                    if isinstance(cost, (int, float)) and cost > 0:
+                        cost_str = f"₱{cost:,.2f}"
+                    else:
+                        cost_str = "Cost not available"
+                    response.append(f"{i}. {name} in {location} - {cost_str}")
                 return "\n".join(response)
                 
-            # Default response
-            project_details = "\n\n".join(
-                f"• {r.get('project_name', 'Unnamed Project')} - {r.get('contractor', 'Unknown')}" 
-                for r in records[:5]
-            )
-            return f"I found {len(records)} relevant projects. Here are some details:\n\n{project_details}"
+            # Default response - use actual dataset column names
+            project_details = []
+            for r in records[:5]:
+                project_name = r.get('ProjectDescription', 'Unnamed Project')
+                contractor = r.get('Contractor', 'Unknown Contractor')
+                location = f"{r.get('Municipality', '')}, {r.get('Province', '')}"
+                cost = r.get('ContractCost', 0)
+                
+                if isinstance(cost, (int, float)) and cost > 0:
+                    cost_str = f" - ₱{cost:,.2f}"
+                else:
+                    cost_str = ""
+                
+                project_details.append(f"• {project_name} in {location} by {contractor}{cost_str}")
+            
+            return f"I found {len(records)} relevant projects. Here are some details:\n\n" + "\n".join(project_details)
                    
         except Exception as e:
             print(f"Error in fallback response: {str(e)}")
@@ -370,34 +390,57 @@ sufficient information to fully answer the question, please indicate what inform
     
     def _prepare_context(self, relevant_records: List[Dict[str, Any]], 
                         context_info: Dict[str, Any] = None) -> str:
-        """Prepare context string from relevant records."""
+        """Prepare enhanced context string from relevant records with smart prioritization."""
         if not relevant_records:
             return "No relevant flood control project records found for this query."
         
         context_parts = []
         
-        # Add dataset overview if available
-        if context_info:
-            context_parts.append(f"Dataset contains {context_info.get('total_records', 'unknown')} total records.")
-            context_parts.append(f"Available columns: {', '.join(context_info.get('columns', []))}")
-            context_parts.append("")
+        # Add analysis scope
+        total_records = len(relevant_records)
+        context_parts.append(f"ANALYSIS SCOPE: {total_records} relevant project(s) found from DPWH database")
+        context_parts.append("")
         
-        # Add relevant records
-        context_parts.append("Relevant project records:")
-        
-        for i, record in enumerate(relevant_records[:5], 1):  # Limit to top 5 records
-            context_parts.append(f"\nRecord {i}:")
-            record_info = []
-            for key, value in record.items():
-                if value is not None and value != '':
-                    if key.lower() == 'contractcost' and isinstance(value, (int, float, str)):
-                        try:
-                            cost = float(value)
-                            value = f"₱{cost:,.2f}"
-                        except (ValueError, TypeError):
-                            pass
-                    record_info.append(f"  - {key}: {value}")
-            context_parts.extend(record_info)
+        # Prioritize and format records
+        for i, record in enumerate(relevant_records[:8], 1):  # Increased to 8 for better context
+            context_parts.append(f"PROJECT {i}:")
+            
+            # Essential fields in priority order
+            essential_fields = [
+                ('ProjectDescription', 'Description'),
+                ('Municipality', 'Municipality'), 
+                ('Province', 'Province'),
+                ('Region', 'Region'),
+                ('ContractCost', 'Contract Cost'),
+                ('Contractor', 'Contractor'),
+                ('CompletionYear', 'Completion Year'),
+                ('TypeofWork', 'Type of Work'),
+                ('InfraYear', 'Infrastructure Year')
+            ]
+            
+            for field_key, display_name in essential_fields:
+                if field_key in record and record[field_key] is not None and str(record[field_key]).strip():
+                    value = record[field_key]
+                    
+                    # Format monetary values
+                    if field_key == 'ContractCost' and isinstance(value, (int, float)):
+                        value = f"₱{value:,.2f}"
+                    
+                    # Clean up text values
+                    elif isinstance(value, str):
+                        value = value.strip()
+                        if value.lower() not in ['n/a', 'none', 'null', '']:
+                            context_parts.append(f"  • {display_name}: {value}")
+                    else:
+                        context_parts.append(f"  • {display_name}: {value}")
+            
+            # Add similarity score if available
+            if '_similarity' in record or 'similarity_score' in record:
+                score = record.get('_similarity', record.get('similarity_score', 0))
+                if score > 0:
+                    context_parts.append(f"  • Relevance Score: {score:.3f}")
+            
+            context_parts.append("")  # Add spacing between records
             
         return "\n".join(context_parts)
     
@@ -1506,7 +1549,7 @@ sufficient information to fully answer the question, please indicate what inform
         self.last_api_call = time.time()
     
     def generate_response(self, query: str, results: List[Dict[str, Any]]) -> str:
-        """Generate a response to the user query using the available LLM backend.
+        """Generate an enhanced response with preprocessing and optimization.
         
         Args:
             query: The user's query
@@ -1522,31 +1565,45 @@ sufficient information to fully answer the question, please indicate what inform
             # Enforce rate limiting
             self._rate_limit()
             
-            # Detect query type
-            query_type = self.detect_query_type(query)
+            # Preprocess and expand query
+            processed_query = self._preprocess_query(query)
             
-            # Get system prompt based on query type
-            system_prompt = self._get_system_prompt(query_type)
+            # Detect query type with enhanced analysis
+            query_type = self.detect_query_type(processed_query)
             
-            # Prepare the prompt with query and context
-            prompt = self._prepare_prompt(query, results, None, query_type)
+            # Prepare enhanced context from results
+            context = self._prepare_context(results)
             
-            # Generate response using OpenAI API with more conservative settings
+            # Create optimized prompt
+            prompt = self._prepare_enhanced_prompt(processed_query, results, query_type)
+            
+            # Determine optimal parameters based on query complexity
+            max_tokens = self._calculate_optimal_tokens(query, results)
+            temperature = self._calculate_optimal_temperature(query_type)
+            
+            # Generate response using OpenAI with optimized parameters
             response = self.client.chat.completions.create(
                 model=self.model,
                 messages=[
-                    {"role": "system", "content": system_prompt},
+                    {"role": "system", "content": self._get_system_prompt(query_type)},
                     {"role": "user", "content": prompt}
                 ],
-                temperature=0.7,  # Slightly lower temperature for more focused responses
-                max_tokens=500,   # Reduced from 1000 to save tokens
-                top_p=0.9,        # Controls diversity
-                frequency_penalty=0.2,  # Slightly reduce repetition
-                presence_penalty=0.2    # Slightly encourage new topics
+                max_tokens=max_tokens,
+                temperature=temperature,
+                top_p=0.9,  # Nucleus sampling for better quality
+                frequency_penalty=0.1,  # Reduce repetition
+                presence_penalty=0.1   # Encourage diverse vocabulary
             )
             
-            return response.choices[0].message.content.strip()
-                
+            # Post-process response for quality
+            final_response = self._post_process_response(
+                response.choices[0].message.content.strip(), 
+                query_type, 
+                len(results)
+            )
+            
+            return final_response
+            
         except Exception as e:
             error_msg = str(e).lower()
             if "rate limit" in error_msg:
@@ -1565,13 +1622,9 @@ sufficient information to fully answer the question, please indicate what inform
             logger.warning("OpenAI client is not initialized")
             return False
             
-        try:
-            # Test the client with a simple request
-            self.client.models.list()
-            return True
-        except Exception as e:
-            logger.error(f"OpenAI client test failed: {e}")
-            return False
+        # Don't test with API call every time as it's expensive and slow
+        # Just check if client exists and is properly initialized
+        return True
     
     def get_model_info(self) -> Dict[str, str]:
         """Get information about the current model."""
@@ -1580,3 +1633,104 @@ sufficient information to fully answer the question, please indicate what inform
             "provider": "OpenAI",
             "available": str(self.is_available())
         }
+    
+    def _preprocess_query(self, query: str) -> str:
+        """Preprocess and expand query for better understanding."""
+        # Clean up the query
+        processed = query.strip()
+        
+        # Expand common abbreviations
+        abbreviations = {
+            'DPWH': 'Department of Public Works and Highways',
+            'NCR': 'National Capital Region',
+            'CAR': 'Cordillera Administrative Region',
+            'ARMM': 'Autonomous Region in Muslim Mindanao',
+            'BARMM': 'Bangsamoro Autonomous Region in Muslim Mindanao'
+        }
+        
+        for abbr, full in abbreviations.items():
+            processed = processed.replace(abbr, f"{abbr} ({full})")
+        
+        # Add context keywords for better retrieval
+        if any(word in processed.lower() for word in ['expensive', 'costly', 'high cost']):
+            processed += " contract cost budget"
+        elif any(word in processed.lower() for word in ['contractor', 'company', 'builder']):
+            processed += " construction company"
+        elif any(word in processed.lower() for word in ['location', 'where', 'region', 'province']):
+            processed += " municipality province region"
+            
+        return processed
+    
+    def _calculate_optimal_tokens(self, query: str, results: List[Dict[str, Any]]) -> int:
+        """Calculate optimal max_tokens based on query complexity and data size."""
+        base_tokens = 800
+        
+        # Adjust based on number of results
+        if len(results) > 5:
+            base_tokens += 300
+        elif len(results) > 10:
+            base_tokens += 500
+            
+        # Adjust based on query complexity
+        if any(word in query.lower() for word in ['compare', 'analysis', 'summary', 'overview']):
+            base_tokens += 400
+        elif any(word in query.lower() for word in ['list', 'show me', 'tell me about']):
+            base_tokens += 200
+            
+        return min(base_tokens, 1500)  # Cap at 1500 tokens
+    
+    def _calculate_optimal_temperature(self, query_type: str) -> float:
+        """Calculate optimal temperature based on query type."""
+        temperature_map = {
+            'cost': 0.1,      # Very factual
+            'contractor': 0.2, # Mostly factual
+            'location': 0.2,   # Mostly factual
+            'time': 0.1,       # Very factual
+            'general': 0.3,    # Slightly more creative
+            'analysis': 0.4    # More creative for insights
+        }
+        return temperature_map.get(query_type, 0.3)
+    
+    def _prepare_enhanced_prompt(self, query: str, results: List[Dict[str, Any]], query_type: str) -> str:
+        """Create an enhanced prompt with better context and instructions."""
+        context = self._prepare_context(results)
+        
+        prompt_parts = [
+            f"USER QUERY: {query}",
+            "",
+            f"QUERY TYPE: {query_type.upper()}",
+            "",
+            "RELEVANT PROJECT DATA:",
+            context,
+            "",
+            "RESPONSE REQUIREMENTS:",
+            "1. Start with a direct answer to the user's question",
+            "2. Provide 2-3 key insights or findings",
+            "3. Include specific data points (costs, locations, dates)",
+            "4. Add context about significance for flood control planning",
+            "5. End with a relevant follow-up question or suggestion",
+            "",
+            "Remember: Base your response ONLY on the provided data. Use professional language with strategic emoji use for visual appeal."
+        ]
+        
+        return "\n".join(prompt_parts)
+    
+    def _post_process_response(self, response: str, query_type: str, result_count: int) -> str:
+        """Post-process the response for quality and consistency."""
+        if not response:
+            return "I apologize, but I couldn't generate a proper response. Please try rephrasing your question."
+        
+        # Add data source attribution if not present
+        if "based on" not in response.lower() and result_count > 0:
+            response += f"\n\n*Analysis based on {result_count} relevant project(s) from the DPWH database.*"
+        
+        # Ensure proper formatting of monetary values
+        import re
+        # Fix any unformatted peso amounts
+        response = re.sub(r'₱(\d+)(?!,)', r'₱\1', response)
+        
+        # Add helpful closing if response seems incomplete
+        if len(response) < 100:
+            response += "\n\nWould you like me to provide more specific information about any particular aspect?"
+        
+        return response

@@ -367,8 +367,20 @@ def main():
                     try:
                         stats = st.session_state.data_handler.get_summary_stats()
                         st.success(f"✅ Loaded {stats.get('total_records', 0):,} flood control projects from DPWH records!")
-                    except:
+                        
+                        # Add debug info in sidebar
+                        with st.sidebar:
+                            with st.expander("🔍 Debug Info", expanded=False):
+                                st.write(f"**Columns:** {len(stats.get('columns', []))}")
+                                st.write(f"**Sample columns:** {stats.get('columns', [])[:5]}")
+                                if st.session_state.data_handler.df is not None:
+                                    sample_contractor = st.session_state.data_handler.df['Contractor'].dropna().iloc[0] if 'Contractor' in st.session_state.data_handler.df.columns else 'N/A'
+                                    sample_project = st.session_state.data_handler.df['ProjectDescription'].dropna().iloc[0] if 'ProjectDescription' in st.session_state.data_handler.df.columns else 'N/A'
+                                    st.write(f"**Sample Contractor:** {sample_contractor}")
+                                    st.write(f"**Sample Project:** {sample_project[:50]}...")
+                    except Exception as e:
                         st.success("✅ Dataset loaded successfully! You can now ask questions about flood control projects.")
+                        st.error(f"Debug: Error getting stats: {e}")
                 else:
                     st.error("❌ Could not load the dataset automatically. Please check if the dataset file exists.")
         

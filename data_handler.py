@@ -195,7 +195,11 @@ class FloodControlDataHandler:
             
         # Extract numeric value
         try:
-            return float(re.sub(r'[^0-9.]', '', cost_str)) * multiplier
+            # Remove all non-numeric characters except decimal point
+            cleaned = re.sub(r'[^0-9.]', '', cost_str)
+            if cleaned:
+                return float(cleaned) * multiplier
+            return 0.0
         except (ValueError, TypeError):
             return 0.0
 
@@ -236,9 +240,30 @@ class FloodControlDataHandler:
                 st.error(f"The {source_description} is empty.")
                 return False
             
-            # Standardize text columns
+            # First, let's check what columns we actually have
+            logger.info(f"Dataset columns: {list(self.df.columns)}")
+            logger.info(f"Dataset shape: {self.df.shape}")
+            
+            # Check for key columns and log their sample values
+            key_columns = ['ProjectDescription', 'Contractor', 'Region', 'Province', 'Municipality', 'ContractCost']
+            for col in key_columns:
+                if col in self.df.columns:
+                    sample_values = self.df[col].dropna().head(3).tolist()
+                    logger.info(f"Column '{col}' sample values: {sample_values}")
+                else:
+                    logger.warning(f"Column '{col}' not found in dataset!")
+            
+            # Standardize text columns and handle null values
             text_columns = self.df.select_dtypes(include=['object']).columns.tolist()
             for col in text_columns:
+                # Fill null values first with appropriate defaults
+                if col == 'Contractor':
+                    self.df[col] = self.df[col].fillna('Unknown Contractor')
+                elif col == 'ProjectDescription':
+                    self.df[col] = self.df[col].fillna('Unnamed Project')
+                else:
+                    self.df[col] = self.df[col].fillna('N/A')
+                
                 # Use preserve_case=True for display fields, False for search fields
                 self.df[col] = self.df[col].apply(
                     lambda x: self._standardize_text(x, preserve_case=True)
@@ -246,18 +271,30 @@ class FloodControlDataHandler:
                     else self._standardize_text(x, preserve_case=False)
                 )
             
-            # Add standardized location columns
+            # Add standardized location columns and project name mapping
             self.df['location_standard'] = self.df['Municipality'].fillna('') + ', ' + \
                                          self.df['Province'].fillna('') + ', ' + \
                                          self.df['Region'].fillna('')
             
+            # Create ProjectName alias for ProjectDescription for backward compatibility
+            if 'ProjectDescription' in self.df.columns and 'ProjectName' not in self.df.columns:
+                self.df['ProjectName'] = self.df['ProjectDescription']
+            
+            # Create Location alias for the combined location
+            if 'Location' not in self.df.columns:
+                self.df['Location'] = self.df['location_standard']
+            
             # Extract and standardize project types
             self.df['project_type'] = self.df['ProjectDescription'].apply(self._extract_project_type)
             
-            # Parse costs
+            # Parse costs and ensure ContractCost is numeric
             cost_columns = [col for col in self.df.columns if 'cost' in col.lower() or 'abc' in col.lower()]
             for col in cost_columns:
                 self.df[f'{col}_numeric'] = self.df[col].apply(self._parse_cost)
+            
+            # Ensure ContractCost is properly converted to numeric
+            if 'ContractCost' in self.df.columns:
+                self.df['ContractCost'] = self.df['ContractCost'].apply(self._parse_cost)
             
             # Parse dates
             date_columns = [col for col in self.df.columns if 'date' in col.lower() or 'year' in col.lower()]
@@ -310,11 +347,15 @@ class FloodControlDataHandler:
                         text_parts.append(str(row[col]))
                 search_texts.append(" ".join(text_parts))
             
-            # Create TF-IDF vectors
+            # Create TF-IDF vectors optimized for RAG
             self.vectorizer = TfidfVectorizer(
                 stop_words='english',
-                max_features=1000,
-                ngram_range=(1, 2)
+                max_features=5000,  # Increased for better coverage of 9,856 records
+                ngram_range=(1, 3),  # Include trigrams for better phrase matching
+                min_df=2,  # Ignore terms that appear in fewer than 2 documents
+                max_df=0.8,  # Ignore terms that appear in more than 80% of documents
+                sublinear_tf=True,  # Use sublinear TF scaling for better performance
+                norm='l2'  # L2 normalization for cosine similarity
             )
             self.tfidf_matrix = self.vectorizer.fit_transform(search_texts)
             logger.info("TF-IDF search index created successfully")
@@ -323,26 +364,61 @@ class FloodControlDataHandler:
             logger.error(f"Error creating search index: {e}")
             self.vectorizer = None
             self.tfidf_matrix = None
-    
+        """Prepare TF-IDF index for semantic search."""
+        if self.df is None or self.df.empty:
+            return
+
+        # Only create search index if scikit-learn is available
+        if not SKLEARN_AVAILABLE:
+            logger.warning("scikit-learn not available. Skipping TF-IDF index creation.")
+            self.vectorizer = None
+            self.tfidf_matrix = None
+            return
+
+        try:
+            # Combine all text columns into a single searchable text
+            search_texts = []
+            for _, row in self.df.iterrows():
+                text_parts = []
+                for col in self.text_columns:
+                    if pd.notna(row[col]):
+                        text_parts.append(str(row[col]))
+                search_texts.append(" ".join(text_parts))
+
+            # Create TF-IDF vectors optimized for RAG
+            self.vectorizer = TfidfVectorizer(
+                stop_words='english',
+                max_features=5000,  # Increased for better coverage of 9,856 records
+                ngram_range=(1, 3),  # Include trigrams for better phrase matching
+                min_df=2,  # Ignore terms that appear in fewer than 2 documents
+                max_df=0.8,  # Ignore terms that appear in more than 80% of documents
+                sublinear_tf=True,  # Use sublinear TF scaling for better performance
+                norm='l2'  # L2 normalization for cosine similarity
+            )
+            self.tfidf_matrix = self.vectorizer.fit_transform(search_texts)
+            logger.info("TF-IDF search index created successfully")
+            
+        except Exception as e:
+            logger.error(f"Error creating search index: {e}")
+            self.vectorizer = None
+            self.tfidf_matrix = None
+
     def search_relevant_records(self, query: str, top_k: int = 10) -> List[Dict[str, Any]]:
         """
         Search for records most relevant to the query with intelligent processing.
-        
+
         This method implements a multi-stage search strategy:
         1. Parse the query for location, year, and other filters
         2. Apply filters to narrow down the dataset
         3. Use TF-IDF for semantic search if needed
         4. Fall back to simple text matching if necessary
-        
+
         Args:
             query: The search query
             top_k: Maximum number of results to return (default: 10)
-            
+
         Returns:
             List of matching records as dictionaries
-            
-        Raises:
-            ValueError: If no data is available
         """
         try:
             # Input validation
@@ -352,11 +428,11 @@ class FloodControlDataHandler:
                 if st.session_state.get('debug_mode', False):
                     st.error(error_msg)
                 return []
-                
+
             if not query or not isinstance(query, str) or not query.strip():
                 logger.warning("Empty or invalid query provided")
                 return []
-                
+
             logger.info(f"Processing search query: {query}")
             
             # Initialize working dataframe
@@ -398,9 +474,10 @@ class FloodControlDataHandler:
                 try:
                     # Only use TF-IDF if scikit-learn is available
                     if SKLEARN_AVAILABLE:
-                        # Combine text columns for TF-IDF
-                        text_columns = [col for col in ['ProjectName', 'ProjectDescription', 'Location', 'Contractor'] 
+                        # Combine text columns for TF-IDF - use actual column names from dataset
+                        text_columns = [col for col in ['ProjectDescription', 'Contractor', 'Municipality', 'Province', 'Region', 'TypeofWork'] 
                                       if col in working_df.columns]
+                        logger.debug(f"Using text columns for TF-IDF: {text_columns}")
                         
                         if text_columns:
                             working_df['combined_text'] = working_df[text_columns].fillna('').apply(
@@ -415,9 +492,18 @@ class FloodControlDataHandler:
                             # Calculate cosine similarity
                             cosine_similarities = cosine_similarity(query_vec, tfidf_matrix).flatten()
                             
-                            # Get top-k most similar documents
-                            top_indices = cosine_similarities.argsort()[-top_k:][::-1]
+                            # Enhanced relevance scoring with multiple factors
+                            enhanced_scores = self._calculate_enhanced_relevance(
+                                working_df, cosine_similarities, query
+                            )
+                            
+                            # Get top-k most relevant documents
+                            top_indices = enhanced_scores.argsort()[-top_k:][::-1]
                             working_df = working_df.iloc[top_indices]
+                            
+                            # Add relevance scores to the dataframe
+                            working_df = working_df.copy()
+                            working_df['_relevance_score'] = enhanced_scores[top_indices]
                             
                             logger.debug(f"Applied TF-IDF ranking, top {len(working_df)} results")
                         else:
@@ -439,6 +525,12 @@ class FloodControlDataHandler:
             # Convert results to list of dictionaries
             results = working_df.head(top_k).to_dict('records')
             logger.info(f"Returning {len(results)} results")
+            
+            # Debug: Log sample result to check data quality
+            if results and logger.isEnabledFor(logging.DEBUG):
+                sample = results[0]
+                logger.debug(f"Sample result: ProjectName={sample.get('ProjectName', 'N/A')}, Contractor={sample.get('Contractor', 'N/A')}, ContractCost={sample.get('ContractCost', 'N/A')}")
+            
             return results
             
         except Exception as e:
@@ -464,7 +556,7 @@ class FloodControlDataHandler:
             return df.head(top_k)
             
         query_terms = query.lower().split()
-        text_columns = [col for col in ['ProjectName', 'ProjectDescription', 'Location', 'Contractor'] 
+        text_columns = [col for col in ['ProjectDescription', 'Contractor', 'Municipality', 'Province', 'Region', 'TypeofWork'] 
                        if col in df.columns]
         
         if not text_columns:
@@ -1562,6 +1654,50 @@ class FloodControlDataHandler:
             'text_columns': self.text_columns,
             'missing_data': self.df.isnull().sum().to_dict()
         }
+    
+    def _calculate_enhanced_relevance(self, df: pd.DataFrame, cosine_scores: np.ndarray, query: str) -> np.ndarray:
+        """Calculate enhanced relevance scores combining multiple factors."""
+        enhanced_scores = cosine_scores.copy()
+        
+        # Boost scores based on query-specific factors
+        query_lower = query.lower()
+        
+        for i, (_, row) in enumerate(df.iterrows()):
+            boost_factor = 1.0
+            
+            # Boost recent projects (if completion year is available)
+            if 'CompletionYear' in row and pd.notna(row['CompletionYear']):
+                try:
+                    year = int(row['CompletionYear'])
+                    if year >= 2020:
+                        boost_factor *= 1.2  # 20% boost for recent projects
+                    elif year >= 2015:
+                        boost_factor *= 1.1  # 10% boost for moderately recent
+                except (ValueError, TypeError):
+                    pass
+            
+            # Boost high-value projects for cost-related queries
+            if any(term in query_lower for term in ['expensive', 'cost', 'budget', 'investment']):
+                if 'ContractCost' in row and pd.notna(row['ContractCost']):
+                    try:
+                        cost = float(row['ContractCost'])
+                        if cost > 50000000:  # 50M+ projects
+                            boost_factor *= 1.3
+                        elif cost > 20000000:  # 20M+ projects
+                            boost_factor *= 1.15
+                    except (ValueError, TypeError):
+                        pass
+            
+            # Boost projects with complete information
+            completeness_score = sum(1 for col in ['ProjectDescription', 'Contractor', 'Municipality', 'Province'] 
+                                   if col in row and pd.notna(row[col]) and str(row[col]).strip())
+            completeness_boost = 1.0 + (completeness_score * 0.05)  # Up to 20% boost
+            boost_factor *= completeness_boost
+            
+            # Apply boost to the cosine similarity score
+            enhanced_scores[i] = cosine_scores[i] * boost_factor
+        
+        return enhanced_scores
     
     def filter_records(self, filters: Dict[str, Any]) -> pd.DataFrame:
         """Apply filters to the dataset."""
