@@ -37,9 +37,13 @@ st.markdown(
     unsafe_allow_html=True
 )
 
-# Initialize handlers
-data_handler = FloodControlDataHandler()
-llm_handler = LLMHandler()
+# Initialize handlers with error handling
+try:
+    data_handler = FloodControlDataHandler()
+    llm_handler = LLMHandler()
+except Exception as e:
+    st.error(f"Failed to initialize handlers: {e}")
+    st.stop()
 
 # Sidebar
 st.sidebar.title("📊 FloodWise PH")
@@ -50,14 +54,19 @@ st.sidebar.markdown("---")
 uploaded_file = st.sidebar.file_uploader("Upload Flood Control Dataset (CSV)", type=["csv"])
 
 if uploaded_file:
-    df = pd.read_csv(uploaded_file)
-    data_handler.load_dataframe(df)
-    st.sidebar.success("✅ Dataset loaded successfully")
-
-    # Sidebar filters
-    st.sidebar.subheader("🔍 Search / Filter")
-    query = st.sidebar.text_input("Enter search keyword")
-    top_k = st.sidebar.slider("Results to show", 1, 20, 5)
+    # Use the correct method name
+    success = data_handler.load_csv(uploaded_file)
+    if success:
+        st.sidebar.success("✅ Dataset loaded successfully")
+        df = data_handler.df  # Get the loaded dataframe
+        
+        # Sidebar filters
+        st.sidebar.subheader("🔍 Search / Filter")
+        query = st.sidebar.text_input("Enter search keyword")
+        top_k = st.sidebar.slider("Results to show", 1, 20, 5)
+    else:
+        st.error("❌ Failed to load dataset")
+        st.stop()
 else:
     st.warning("Please upload a dataset to begin.")
     st.stop()
@@ -73,12 +82,18 @@ with st.expander("📂 Preview Dataset"):
 # Query handler
 if query:
     with st.spinner("Searching relevant data..."):
-        results = data_handler.query(query, top_k=top_k)
-        if not results.empty:
-            st.success(f"Found {len(results)} matching records")
-            st.dataframe(results, use_container_width=True)
-        else:
-            st.error("No matching records found.")
+        try:
+            # Use the correct method name
+            results = data_handler.search_relevant_records(query, top_k=top_k)
+            if results:
+                st.success(f"Found {len(results)} matching records")
+                # Convert list of dicts to DataFrame for display
+                results_df = pd.DataFrame(results)
+                st.dataframe(results_df, use_container_width=True)
+            else:
+                st.error("No matching records found.")
+        except Exception as e:
+            st.error(f"Search failed: {e}")
 
 # LLM insights
 st.markdown("### 🤖 AI Insights")
@@ -86,8 +101,15 @@ user_question = st.text_area("Ask a question about the dataset:")
 if st.button("Generate Answer"):
     if user_question.strip():
         with st.spinner("Generating AI insights..."):
-            answer = llm_handler.get_response(user_question, df)
-            st.markdown(f"**Answer:** {answer}")
+            try:
+                # First search for relevant data, then generate response
+                relevant_data = data_handler.search_relevant_records(user_question, top_k=10)
+                answer = llm_handler.generate_response(user_question, relevant_data)
+                st.markdown(f"**Answer:** {answer}")
+            except Exception as e:
+                st.error(f"AI response failed: {e}")
+                # Provide fallback response
+                st.info("AI is not available. Please use the search function above to explore the data.")
     else:
         st.warning("Please enter a question.")
 
