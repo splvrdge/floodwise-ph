@@ -91,7 +91,7 @@ def sidebar():
             if st.button("Retry Loading AI Model"):
                 try:
                     with st.spinner("Loading AI model..."):
-                        st.session_state.llm_handler = LLMHandler(prefer_local=True)
+                        st.session_state.llm_handler = LLMHandler()
                         st.rerun()
                 except Exception as e:
                     st.error(f"Failed to load AI model: {str(e)}")
@@ -170,7 +170,7 @@ def chat_ui():
                     num_results = int(num_match.group(1)) if num_match else 5
                     
                     # Search for relevant records
-                    results = st.session_state.data_handler.search_relevant_records(prompt, limit=num_results)
+                    results = st.session_state.data_handler.search_relevant_records(prompt, top_k=num_results)
                     
                     # Generate response
                     response = st.session_state.llm_handler.generate_response(
@@ -320,7 +320,6 @@ def check_system_resources():
 def configure_streamlit():
     """Configure Streamlit settings for both local and cloud environments."""
     import os
-    import streamlit as st
     
     # Check if running in Streamlit Cloud
     IS_STREAMLIT_CLOUD = 'STREAMLIT_SERVER_RUN_ON_UPDATE' in os.environ
@@ -330,18 +329,27 @@ def configure_streamlit():
         os.environ['STREAMLIT_SERVER_HEADLESS'] = 'true'
         os.environ['BROWSER'] = 'false'
         
-        # Configure server settings for local
-        st.config.set_option('server.headless', True)
-        st.config.set_option('server.enableCORS', True)
-        st.config.set_option('server.enableXsrfProtection', True)
-        st.config.set_option('server.fileWatcherType', 'none')
-        st.config.set_option('server.port', 8501)
-    else:
-        # Streamlit Cloud specific settings
-        st.config.set_option('server.address', '0.0.0.0')
-        
-    # Disable warning about file downloader
-    st.set_option('deprecation.showfileUploaderEncoding', False)
+        # Only set configurations that are still supported
+        try:
+            import streamlit as st
+            # These configurations may not be available in all Streamlit versions
+            # Wrap in try-except to prevent errors
+            try:
+                st.config.set_option('server.headless', True)
+            except:
+                pass
+            try:
+                st.config.set_option('server.enableCORS', True)
+            except:
+                pass
+            try:
+                st.config.set_option('server.fileWatcherType', 'none')
+            except:
+                pass
+        except Exception as e:
+            logger.warning(f"Could not configure Streamlit settings: {e}")
+    
+    # Note: Removed server.address setting as it may cause issues in some environments
 
 def main():
     """Main application function."""

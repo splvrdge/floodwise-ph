@@ -620,7 +620,7 @@ class FloodControlDataHandler:
                     if fuzz.ratio(term, text) > 85:
                         return True
                 except Exception as e:
-                    self.logger.warning(f"Fuzzy matching error: {str(e)}")
+                    logger.warning(f"Fuzzy matching error: {str(e)}")
                     
         return False
 
