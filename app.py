@@ -305,38 +305,9 @@ def check_system_resources():
         logger.warning(f"Could not check system resources: {e}")
 
 def configure_streamlit():
-    """Configure Streamlit settings for both local and cloud environments."""
-    import os
-    
-    # Check if running in Streamlit Cloud
-    IS_STREAMLIT_CLOUD = 'STREAMLIT_SERVER_RUN_ON_UPDATE' in os.environ
-    
-    if not IS_STREAMLIT_CLOUD:
-        # Local development settings
-        os.environ['STREAMLIT_SERVER_HEADLESS'] = 'true'
-        os.environ['BROWSER'] = 'false'
-        
-        # Only set configurations that are still supported
-        try:
-            import streamlit as st
-            # These configurations may not be available in all Streamlit versions
-            # Wrap in try-except to prevent errors
-            try:
-                st.config.set_option('server.headless', True)
-            except:
-                pass
-            try:
-                st.config.set_option('server.enableCORS', True)
-            except:
-                pass
-            try:
-                st.config.set_option('server.fileWatcherType', 'none')
-            except:
-                pass
-        except Exception as e:
-            logger.warning(f"Could not configure Streamlit settings: {e}")
-    
-    # Note: Removed server.address setting as it may cause issues in some environments
+    """Configure Streamlit settings - simplified version."""
+    # Removed complex configuration that might cause issues
+    pass
 
 def main():
     """Main application function."""
@@ -352,77 +323,16 @@ def main():
             initial_sidebar_state="expanded"
         )
         
-        # Add custom CSS for better mobile experience
+        # Simplified CSS - removed potentially problematic styles
         st.markdown("""
         <style>
-            /* Make the chat container more compact */
-            .stChatFloatingInputContainer {
-                max-width: 900px;
-                margin: 0 auto;
-            }
-            
-            /* Reduce overall spacing and gaps */
             .main .block-container {
-                padding-top: 1rem;
-                padding-bottom: 1rem;
                 max-width: 1200px;
-            }
-            
-            /* Remove yellow backgrounds from alerts and reduce spacing */
-            .stAlert {
-                border-left: 3px solid #1f77b4;
-                padding: 0.5rem 0.75rem;
-                margin: 0.5rem 0;
-                border-radius: 0.25rem;
-                background-color: transparent;
-            }
-            
-            /* Remove red background from errors and reduce spacing */
-            .stException {
-                border-left: 3px solid #ff4b4b;
-                padding: 0.5rem 0.75rem;
-                margin: 0.5rem 0;
-                border-radius: 0.25rem;
-                background-color: transparent;
-            }
-            
-            /* Reduce spacing in expanders */
-            .streamlit-expanderHeader {
-                padding: 0.5rem 0;
-            }
-            
-            /* Reduce spacing in sidebar */
-            .css-1d391kg {
-                padding-top: 1rem;
-            }
-            
-            /* Better spacing for mobile */
-            @media (max-width: 768px) {
-                .stChatFloatingInputContainer {
-                    padding: 5px;
-                }
-                
-                /* Hide the sidebar on mobile for more space */
-                section[data-testid="stSidebar"] {
-                    display: none;
-                }
-                
-                /* Make the main content full width on mobile */
-                .main .block-container {
-                    padding: 0.5rem;
-                }
-                
-                /* Better spacing for chat messages */
-                .stChatMessage {
-                    padding: 0.25rem;
-                    margin: 0.25rem 0;
-                }
             }
         </style>
         """, unsafe_allow_html=True)
         
-        # Check system resources
-        check_system_resources()
+        # Skip system resources check to avoid potential issues
         
         # Initialize with error handling
         initialize_handlers()
