@@ -209,12 +209,6 @@ def chat_ui():
                         st.write("- Using the Quick Filters in the sidebar")
                         st.write("- Checking if the dataset is properly loaded")
 
-def footer():
-    st.markdown(
-        "<footer>🌊 FloodWise PH • 🇵🇭 Philippines Flood Control Intelligence<br>"
-        "🚀 Built with Streamlit • 🤖 AI-powered • 📱 Mobile Ready</footer>",
-        unsafe_allow_html=True,
-    )
 
 def initialize_handlers():
     """Initialize data and LLM handlers with error handling."""
@@ -233,60 +227,28 @@ def initialize_handlers():
     # Initialize LLM handler if not exists
     if 'llm_handler' not in st.session_state:
         try:
-            with st.spinner("Initializing AI model..."):
-                # Check for API key in multiple locations
-                api_key = None
-                
-                # 1. Check Streamlit secrets
-                if hasattr(st, 'secrets') and 'OPENAI_API_KEY' in st.secrets:
-                    api_key = st.secrets['OPENAI_API_KEY']
-                # 2. Check environment variables
-                elif 'OPENAI_API_KEY' in os.environ:
-                    api_key = os.environ['OPENAI_API_KEY']
-                # 3. Check .env file
-                else:
-                    try:
-                        from dotenv import load_dotenv
-                        load_dotenv()
-                        api_key = os.getenv('OPENAI_API_KEY')
-                    except:
-                        pass
-                
-                if not api_key:
-                    st.warning("""
-                    ⚠️ **OpenAI API Key Not Found**
-                    
-                    To use this app, you'll need an OpenAI API key. Here's how to get started:
-                    
-                    1. Sign up at [OpenAI](https://platform.openai.com/signup)
-                    2. Get your API key from the [API Keys](https://platform.openai.com/account/api-keys) page
-                    3. Add it to your Streamlit secrets or as an environment variable
-                    
-                    The app will use a limited fallback mode without the API key.
-                    """)
-                    st.session_state.llm_handler = None
-                    return
-                
-                # Set the API key in environment if not already set
-                if 'OPENAI_API_KEY' not in os.environ:
-                    os.environ['OPENAI_API_KEY'] = api_key
-                
-                # Initialize the LLM handler with gpt-3.5-turbo (free tier compatible)
-                st.session_state.llm_handler = LLMHandler(model_name="gpt-3.5-turbo")
+            with st.spinner("Loading TinyLlama model... (This may take a few minutes on first run)"):
+                # Initialize TinyLlama - no API key needed!
+                st.session_state.llm_handler = LLMHandler()  # Uses TinyLlama by default
                 
                 # Test if the model is available
                 if not st.session_state.llm_handler.is_available():
-                    st.warning("""
-                    ⚠️ **AI Model Not Available**
+                    st.error("""
+                    ❌ **TinyLlama Model Failed to Load**
                     
-                    The AI model couldn't be loaded. This might be because:
-                    - Your API key is invalid or has expired
-                    - You've exceeded your usage limits
-                    - There's a temporary issue with the API
+                    The local AI model couldn't be loaded. This might be because:
+                    - Missing dependencies (transformers, torch)
+                    - Insufficient memory or disk space
+                    - Network issues during model download
+                    
+                    Please try:
+                    1. Install dependencies: `pip install transformers torch accelerate`
+                    2. Restart the application
+                    3. Check your internet connection for model download
                     
                     The app will use a limited fallback mode.
                     """)
-                    
+                    st.session_state.llm_handler = None
         except Exception as e:
             st.error(f"❌ Error initializing AI model: {str(e)}")
             st.session_state.llm_handler = None
@@ -372,10 +334,45 @@ def main():
                 margin: 0 auto;
             }
             
+            /* Reduce overall spacing and gaps */
+            .main .block-container {
+                padding-top: 1rem;
+                padding-bottom: 1rem;
+                max-width: 1200px;
+            }
+            
+            /* Remove yellow backgrounds from alerts and reduce spacing */
+            .stAlert {
+                border-left: 3px solid #1f77b4;
+                padding: 0.5rem 0.75rem;
+                margin: 0.5rem 0;
+                border-radius: 0.25rem;
+                background-color: transparent;
+            }
+            
+            /* Remove red background from errors and reduce spacing */
+            .stException {
+                border-left: 3px solid #ff4b4b;
+                padding: 0.5rem 0.75rem;
+                margin: 0.5rem 0;
+                border-radius: 0.25rem;
+                background-color: transparent;
+            }
+            
+            /* Reduce spacing in expanders */
+            .streamlit-expanderHeader {
+                padding: 0.5rem 0;
+            }
+            
+            /* Reduce spacing in sidebar */
+            .css-1d391kg {
+                padding-top: 1rem;
+            }
+            
             /* Better spacing for mobile */
             @media (max-width: 768px) {
                 .stChatFloatingInputContainer {
-                    padding: 10px;
+                    padding: 5px;
                 }
                 
                 /* Hide the sidebar on mobile for more space */
@@ -385,31 +382,14 @@ def main():
                 
                 /* Make the main content full width on mobile */
                 .main .block-container {
-                    padding: 1rem;
+                    padding: 0.5rem;
                 }
                 
                 /* Better spacing for chat messages */
                 .stChatMessage {
-                    padding: 0.5rem;
+                    padding: 0.25rem;
+                    margin: 0.25rem 0;
                 }
-            }
-            
-            /* Style for warning messages */
-            .stAlert {
-                border-left: 4px solid #f4c430;
-                padding: 0.5rem 1rem;
-                margin: 1rem 0;
-                border-radius: 0.25rem;
-                background-color: rgba(244, 196, 48, 0.1);
-            }
-            
-            /* Style for error messages */
-            .stException {
-                border-left: 4px solid #ff4b4b;
-                padding: 0.5rem 1rem;
-                margin: 1rem 0;
-                border-radius: 0.25rem;
-                background-color: rgba(255, 75, 75, 0.1);
             }
         </style>
         """, unsafe_allow_html=True)
@@ -457,9 +437,9 @@ def main():
     with st.sidebar:
         # Header with logo and title
         st.markdown("""
-        <div style='text-align: center; padding: 1rem 0;'>
-            <h1 style='color: #1f77b4; margin: 0;'>🌊 FloodWise PH</h1>
-            <p style='color: #666; margin: 0; font-size: 0.9em;'>AI-Powered Flood Control Intelligence</p>
+        <div style='text-align: center; padding: 0.5rem 0;'>
+            <h1 style='color: #1f77b4; margin: 0; font-size: 1.5em;'>🌊 FloodWise PH</h1>
+            <p style='color: #666; margin: 0; font-size: 0.85em;'>AI-Powered Flood Control Intelligence</p>
         </div>
         """, unsafe_allow_html=True)
         
@@ -552,8 +532,8 @@ def main():
         # AI Assistant Section
         with st.expander("🤖 AI Assistant", expanded=True):
             if st.session_state.get('llm_handler') and st.session_state.llm_handler.is_available():
-                st.success("✅ AI Model Ready")
-                st.caption("Using GPT-3.5-turbo for intelligent responses")
+                st.success("✅ TinyLlama Ready")
+                st.caption("Using local TinyLlama model for intelligent responses")
             else:
                 st.warning("⚠️ Basic Mode Active")
                 st.caption("Limited functionality without AI model")
@@ -688,13 +668,24 @@ def main():
     # Display chat interface
     chat_ui()
     
-    # Footer
+    # Footer - positioned below chat interface
     st.markdown("---")
     st.markdown(
-        "<div style='text-align: center; color: #666; font-size: 0.9em; margin-top: 2em;'>"
-        "🌊 FloodWise PH • 🇵🇭 Philippines Flood Control Intelligence<br>"
-        "🚀 Built with Streamlit • 🤖 AI-powered • 📱 Mobile Ready"
-        "</div>",
+        """
+        <div style='
+            text-align: center; 
+            color: #666; 
+            font-size: 0.85em; 
+            margin-top: 1em;
+            padding: 0.5em;
+        '>
+            <strong>🌊 FloodWise PH</strong> • 🇵🇭 Philippines Flood Control Intelligence<br>
+            🚀 Built with Streamlit • 🤖 TinyLlama-powered • 📱 Mobile Ready<br>
+            <small style='color: #999; font-size: 0.75em;'>
+                Analyzing DPWH flood control projects with AI
+            </small>
+        </div>
+        """,
         unsafe_allow_html=True
     )
 

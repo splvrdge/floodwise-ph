@@ -174,13 +174,14 @@ def test_tinyllama_integration():
         return False
 
 def test_model_loading():
-    """Test if TinyLlama model can be loaded successfully."""
+    """Test if TinyLlama model can be loaded successfully using official configuration."""
     print("\n🔧 Testing TinyLlama Model Loading...")
     
     try:
         from llm_handler import LLMHandler
         
-        print("📥 Loading TinyLlama model (this may take a few minutes on first run)...")
+        print("📥 Loading TinyLlama model following official Hugging Face configuration...")
+        print("   (This may take a few minutes on first run - downloading ~2.2GB)")
         start_time = time.time()
         
         llm_handler = LLMHandler()
@@ -191,28 +192,35 @@ def test_model_loading():
         if llm_handler.is_available():
             print("✅ TinyLlama model loaded successfully!")
             
-            # Test basic generation
-            print("🧪 Testing basic text generation...")
-            test_prompt = "Hello, I am FloodWise PH assistant."
+            # Test the official chat template format
+            print("🧪 Testing TinyLlama chat template...")
             
-            # Create a simple test
+            # Create a simple test using the official format
             simple_results = [
                 {
-                    "ProjectDescription": "Test Flood Control Project",
-                    "Municipality": "Test City",
-                    "Province": "Test Province",
-                    "ContractCost": 1000000,
-                    "Contractor": "Test Contractor"
+                    "ProjectDescription": "Flood Control Infrastructure Project",
+                    "Municipality": "Quezon City",
+                    "Province": "Metro Manila",
+                    "ContractCost": 5000000,
+                    "Contractor": "ABC Construction Corp"
                 }
             ]
             
-            response = llm_handler.generate_response("Tell me about this project", simple_results)
+            test_query = "What can you tell me about this flood control project?"
+            response = llm_handler.generate_response(test_query, simple_results)
             
             if response and len(response) > 20:
-                print("✅ Basic text generation working!")
-                print(f"📝 Sample response: {response[:100]}...")
+                print("✅ TinyLlama chat template working!")
+                print(f"📝 Sample response: {response[:150]}...")
+                
+                # Check if response contains relevant information
+                if any(term in response.lower() for term in ['flood', 'project', 'quezon', 'manila']):
+                    print("✅ Response contains relevant project information")
+                else:
+                    print("⚠️  Response may not be analyzing data correctly")
             else:
-                print("⚠️  Basic text generation may have issues")
+                print("⚠️  TinyLlama response generation may have issues")
+                print(f"📝 Response received: '{response}'")
                 
             return True
         else:

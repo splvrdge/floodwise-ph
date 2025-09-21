@@ -78,59 +78,48 @@ class LLMHandler:
     
     
     def _initialize_huggingface_model(self):
-        """Initialize Hugging Face model."""
+        """Initialize TinyLlama model following official Hugging Face configuration."""
         if not HUGGINGFACE_AVAILABLE:
             logger.warning("Hugging Face transformers not available. Please install with: pip install transformers torch")
             self.available = False
             return
             
         try:
-            logger.info(f"Loading Hugging Face model: {self.model}")
+            logger.info(f"Loading TinyLlama model: {self.model}")
             
-            # Check if CUDA is available for GPU acceleration
-            device = "cuda" if torch.cuda.is_available() else "cpu"
-            logger.info(f"Using device: {device}")
+            # Follow TinyLlama's official configuration from Hugging Face
+            # Use bfloat16 if available, otherwise float16, fallback to float32
+            if torch.cuda.is_available():
+                torch_dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
+                device_map = "auto"
+                logger.info("Using CUDA with auto device mapping")
+            else:
+                torch_dtype = torch.float32
+                device_map = None
+                logger.info("Using CPU")
             
-            # Load tokenizer and model
-            self.tokenizer = AutoTokenizer.from_pretrained(self.model)
-            
-            # Add padding token if it doesn't exist
-            if self.tokenizer.pad_token is None:
-                self.tokenizer.pad_token = self.tokenizer.eos_token
-            
-            # Load model with appropriate settings
-            model_kwargs = {
-                "torch_dtype": torch.float16 if device == "cuda" else torch.float32,
-                "device_map": "auto" if device == "cuda" else None,
-                "trust_remote_code": True
-            }
-            
-            self.hf_model = AutoModelForCausalLM.from_pretrained(
-                self.model,
-                **model_kwargs
-            )
-            
-            # Create text generation pipeline
+            # Create pipeline following TinyLlama's official example
             self.pipeline = pipeline(
                 "text-generation",
-                model=self.hf_model,
-                tokenizer=self.tokenizer,
-                device=0 if device == "cuda" else -1,
-                torch_dtype=torch.float16 if device == "cuda" else torch.float32,
+                model=self.model,
+                torch_dtype=torch_dtype,
+                device_map=device_map,
                 trust_remote_code=True
             )
             
-            logger.info(f"Successfully loaded {self.model} on {device}")
+            # Store tokenizer reference for chat template
+            self.tokenizer = self.pipeline.tokenizer
+            
+            logger.info(f"Successfully loaded {self.model} with {torch_dtype}")
             self.available = True
             
         except Exception as e:
-            logger.error(f"Failed to initialize Hugging Face model: {e}")
+            logger.error(f"Failed to initialize TinyLlama model: {e}")
             self.tokenizer = None
-            self.hf_model = None
             self.pipeline = None
             self.available = False
             if hasattr(st, 'error'):
-                st.error(f"Failed to load local model: {str(e)}. Please check your installation.")
+                st.error(f"Failed to load TinyLlama model: {str(e)}. Please check your installation.")
     
     def detect_query_type(self, query: str) -> str:
         """Detect the type of query to determine response format."""
@@ -330,49 +319,59 @@ Please analyze this flood control project data and provide a comprehensive respo
     
     
     def _generate_huggingface_response(self, prompt: str, query_type: str, max_tokens: int, temperature: float) -> str:
-        """Generate response using TinyLlama to analyze flood control data."""
-        # Create a focused system prompt for TinyLlama
-        system_prompt = self._get_system_prompt(query_type)
-        
-        # Format prompt for TinyLlama chat format
-        full_prompt = f"<|system|>\n{system_prompt}</s>\n<|user|>\n{prompt}</s>\n<|assistant|>\n"
-        
-        # Generate response using the pipeline
+        """Generate response using TinyLlama following official Hugging Face chat template."""
         try:
             logger.info(f"Generating TinyLlama response with {max_tokens} max tokens")
             
+            # Create messages following TinyLlama's official chat format
+            system_prompt = self._get_system_prompt(query_type)
+            messages = [
+                {
+                    "role": "system",
+                    "content": system_prompt
+                },
+                {
+                    "role": "user", 
+                    "content": prompt
+                }
+            ]
+            
+            # Use tokenizer's chat template as recommended by TinyLlama
+            formatted_prompt = self.pipeline.tokenizer.apply_chat_template(
+                messages, 
+                tokenize=False, 
+                add_generation_prompt=True
+            )
+            
+            # Generate response using TinyLlama's recommended parameters
             outputs = self.pipeline(
-                full_prompt,
+                formatted_prompt,
                 max_new_tokens=max_tokens,
-                temperature=temperature,
                 do_sample=True,
-                top_p=0.9,
+                temperature=temperature,
                 top_k=50,
-                repetition_penalty=1.1,
-                pad_token_id=self.tokenizer.eos_token_id,
-                eos_token_id=self.tokenizer.eos_token_id,
-                return_full_text=False,
-                clean_up_tokenization_spaces=True
+                top_p=0.95,
+                return_full_text=False
             )
             
             # Extract the generated text
             generated_text = outputs[0]['generated_text'].strip()
             
-            # Clean up the response
-            # Remove any system/user/assistant tags that might appear
+            # Clean up any remaining template tokens
             generated_text = re.sub(r'<\|.*?\|>', '', generated_text)
             generated_text = re.sub(r'</s>', '', generated_text)
             generated_text = generated_text.strip()
             
-            # If response is too short or empty, try again with different parameters
+            # If response is too short, try with adjusted parameters
             if len(generated_text) < 50:
-                logger.warning("Generated response too short, trying with higher temperature")
+                logger.warning("Generated response too short, retrying with adjusted parameters")
                 outputs = self.pipeline(
-                    full_prompt,
-                    max_new_tokens=max_tokens + 200,
-                    temperature=min(temperature + 0.2, 1.0),
+                    formatted_prompt,
+                    max_new_tokens=max_tokens + 100,
                     do_sample=True,
-                    top_p=0.95,
+                    temperature=min(temperature + 0.1, 0.9),
+                    top_k=40,
+                    top_p=0.9,
                     return_full_text=False
                 )
                 generated_text = outputs[0]['generated_text'].strip()
