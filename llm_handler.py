@@ -90,23 +90,23 @@ class LLMHandler:
             # Determine device and dtype with better compatibility
             if torch.cuda.is_available():
                 device = 0  # Use first GPU
-                torch_dtype = torch.float16  # Use float16 for better compatibility
+                model_dtype = torch.float16  # Use float16 for better compatibility
                 logger.info("Using CUDA GPU")
             else:
                 device = -1  # Use CPU
-                torch_dtype = torch.float32
+                model_dtype = torch.float32
                 logger.info("Using CPU")
             
             # Create pipeline with explicit device handling (avoid device_map="auto")
             try:
+                # Use the new 'dtype' parameter instead of deprecated 'torch_dtype'
                 self.pipeline = pipeline(
                     "text-generation",
                     model=self.model,
-                    torch_dtype=torch_dtype,
+                    dtype=model_dtype,
                     device=device,
                     trust_remote_code=True,
                     model_kwargs={
-                        "torch_dtype": torch_dtype,
                         "low_cpu_mem_usage": True,
                     }
                 )
@@ -123,7 +123,7 @@ class LLMHandler:
                 # Load model manually with proper device handling
                 model = AutoModelForCausalLM.from_pretrained(
                     self.model,
-                    torch_dtype=torch_dtype,
+                    dtype=model_dtype,
                     low_cpu_mem_usage=True,
                     trust_remote_code=True
                 )
@@ -137,8 +137,7 @@ class LLMHandler:
                     "text-generation",
                     model=model,
                     tokenizer=self.tokenizer,
-                    device=device,
-                    torch_dtype=torch_dtype
+                    device=device
                 )
                 logger.info(f"Successfully loaded {self.model} with manual approach")
             
@@ -146,7 +145,7 @@ class LLMHandler:
             if not hasattr(self, 'tokenizer') or self.tokenizer is None:
                 self.tokenizer = self.pipeline.tokenizer
             
-            logger.info(f"TinyLlama model ready with {torch_dtype} precision")
+            logger.info(f"TinyLlama model ready with {model_dtype} precision")
             self.available = True
             
         except Exception as e:
