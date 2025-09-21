@@ -29,8 +29,12 @@ try:
     HUGGINGFACE_AVAILABLE = True
     logger.info("Hugging Face transformers available")
 except ImportError:
-    logger.error("Hugging Face transformers not available. Please install with: pip install transformers torch")
-    raise ImportError("TinyLlama requires transformers and torch. Please run: pip install transformers torch")
+    logger.warning("Hugging Face transformers not available. App will run in fallback mode.")
+    # Don't raise error - allow app to continue without TinyLlama
+    AutoTokenizer = None
+    AutoModelForCausalLM = None
+    pipeline = None
+    torch = None
 
 class QueryType(Enum):
     """Types of user queries that can be handled."""
@@ -103,13 +107,13 @@ class LLMHandler:
                 return
             
             # Determine device and dtype with better compatibility
-            if torch.cuda.is_available():
+            if torch and torch.cuda.is_available():
                 device = 0  # Use first GPU
                 model_dtype = torch.float16  # Use float16 for better compatibility
                 logger.info("Using CUDA GPU")
             else:
                 device = -1  # Use CPU
-                model_dtype = torch.float32
+                model_dtype = torch.float32 if torch else None
                 logger.info("Using CPU")
             
             # Create pipeline with explicit device handling (avoid device_map="auto")
@@ -144,7 +148,7 @@ class LLMHandler:
                 )
                 
                 # Move to device after loading
-                if torch.cuda.is_available():
+                if torch and torch.cuda.is_available():
                     model = model.to('cuda')
                 
                 # Create pipeline with loaded model
